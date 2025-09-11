@@ -99,8 +99,9 @@ class VerticaConnectionPool:
         self.lock = threading.Lock()
         try:
             self._initialize_pool()
-        except:
-            pass
+        except Exception as e:
+            logger.error("Failed to initialize connection pool: %s", e)
+            raise
 
     def _get_connection_config(self) -> Dict[str, Any]:
         """Get connection configuration with SSL settings if enabled."""
@@ -165,8 +166,8 @@ class VerticaConnectionPool:
                 logger.error(f"Failed to release connection to pool: {str(e)}")
                 try:
                     conn.close()
-                except:
-                    pass
+                except Exception as close_error:
+                    logger.error(f"Failed to close connection: {close_error}")
 
     def close_all(self):
         """Close all connections in the pool."""
@@ -174,8 +175,8 @@ class VerticaConnectionPool:
             try:
                 conn = self.pool.get_nowait()
                 conn.close()
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Error closing connection: {e}")
 
 class VerticaConnectionManager:
     def __init__(self):
