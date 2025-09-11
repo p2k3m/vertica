@@ -20,6 +20,7 @@ def ensure_schema_and_tables(mgr: VerticaConnectionManager):
         cur = conn.cursor()
         for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
             cur.execute(stmt + ";")
+        conn.commit()
     finally:
         if cur: cur.close()
         if conn: mgr.release_connection(conn)
@@ -71,6 +72,7 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
             ])
             incidents.append((iid, opened, random.choice(PRIO), random.choice(CATS), random.choice(["DBA","NETOPS","APPENG","SECOPS"]), txt[:80], txt, random.choice(STATUS), closed, random.choice(cis)[0]))
         cur.copy("COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ','", incidents)
+        conn.commit()
     finally:
         if cur: cur.close()
         if conn: mgr.release_connection(conn)
