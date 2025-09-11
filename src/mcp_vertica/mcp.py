@@ -114,7 +114,7 @@ async def execute_query(ctx: Context, query: str) -> str:
     schema = extract_schema_from_query(query)
     # Check operation permissions
     operation = extract_operation_type(query)
-    if operation and not manager.is_operation_allowed(schema or "default", operation):
+    if operation and not manager.is_operation_allowed(schema=schema or "default", operation=operation):
         error_msg = f"Operation {operation.name} not allowed for schema {schema}"
         await ctx.error(error_msg)
         return error_msg
@@ -166,7 +166,7 @@ async def stream_query(
     schema = extract_schema_from_query(query)
     # Check operation permissions
     operation = extract_operation_type(query)
-    if operation and not manager.is_operation_allowed(schema or "default", operation):
+    if operation and not manager.is_operation_allowed(schema=schema or "default", operation=operation):
         error_msg = f"Operation {operation.name} not allowed for schema {schema}"
         await ctx.error(error_msg)
         return error_msg
@@ -225,8 +225,8 @@ async def copy_data(
         return "Error: No database connection manager available"
 
     # Check operation permissions
-    if not manager.is_operation_allowed(schema, OperationType.INSERT):
-        error_msg = f"INSERT operation not allowed for database {schema}"
+    if not manager.is_operation_allowed(schema=schema, operation=OperationType.INSERT):
+        error_msg = f"INSERT operation not allowed for schema {schema}"
         await ctx.error(error_msg)
         return error_msg
 

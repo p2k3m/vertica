@@ -203,14 +203,14 @@ class VerticaConnectionManager:
         if self.pool:
             self.pool.release_connection(conn)
 
-    def is_operation_allowed(self, database: str, operation: OperationType) -> bool:
-        """Check if an operation is allowed for a specific database."""
+    def is_operation_allowed(self, schema: str, operation: OperationType) -> bool:
+        """Check if an operation is allowed for a specific schema."""
         if not self.config:
             return False
 
         # Get schema permissions
         schema_permissions = self.config.schema_permissions or {}
-        schema_perms = schema_permissions.get(database)
+        schema_perms = schema_permissions.get(schema)
 
         # Check schema-specific permissions first
         if schema_perms:
