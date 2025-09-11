@@ -26,7 +26,9 @@ class NlpOut(QueryOut):
 
 def _manager() -> VerticaConnectionManager:
     cfg = VerticaConfig.from_env()
-    return VerticaConnectionManager(cfg)
+    mgr = VerticaConnectionManager()
+    mgr.initialize_default(cfg)
+    return mgr
 
 @app.get("/api/health")
 def health():
