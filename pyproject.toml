@@ -7,7 +7,14 @@ dependencies = [
     "vertica-python>=1.0.0",
     "click>=8.0.0",
     "python-dotenv>=1.0.0",
-    "mcp[cli]"
+    "mcp[cli]",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.29",
+    "pydantic>=2.7",
+    "requests>=2.31",
+    "pandas>=2.2",
+    "scikit-learn>=1.5",
+    "numpy>=1.26",
 ]
 
 [[project.authors]]

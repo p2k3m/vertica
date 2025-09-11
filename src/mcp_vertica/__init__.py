@@ -24,6 +24,9 @@ from .connection import (
     VERTICA_SSL,
     VERTICA_SSL_REJECT_UNAUTHORIZED,
 )
+from .rest import serve_rest as _serve_rest
+from .nlp import NL2SQL, SimilarIncidents
+from .connection import VerticaConnectionManager, VerticaConfig
 
 __version__ = "0.1.4"
 
@@ -120,7 +123,7 @@ def main(
     else:
         mcp.run()
 
-@click.command()
+@click.group(invoke_without_command=True)
 @click.option(
     "-v",
     "--verbose",
@@ -183,8 +186,73 @@ def main(
     default=True,
     help="Reject unauthorized SSL certificates",
 )
-def cli(**kwargs):
-    main(**kwargs)
+@click.pass_context
+def cli(ctx, **kwargs):
+    if ctx.invoked_subcommand is None:
+        main(**kwargs)
+
+
+@click.group()
+def nlp():
+    "Natural language tools"
+    pass
+
+
+@nlp.command("ask")
+@click.argument("question", nargs=-1)
+@click.option("--execute/--dry-run", default=True, help="Execute the SQL or just print it")
+@click.option("--model", default="llama3.1:8b")
+@click.option("--ollama-host", default="http://127.0.0.1:11434")
+def nlp_ask(question, execute, model, ollama_host):
+    q = " ".join(question)
+    mgr = VerticaConnectionManager(VerticaConfig.from_env())
+    n2s = NL2SQL(ollama_host=ollama_host, model=model)
+    sql = n2s.generate_sql(mgr, q)
+    click.echo(f"SQL:\n{sql}")
+    if not execute:
+        return
+    conn = cur = None
+    try:
+        conn = mgr.get_connection()
+        cur = conn.cursor()
+        cur.execute(sql)
+        rows = cur.fetchall()
+        cols = [d[0] for d in cur.description] if cur.description else []
+        click.echo(f"Columns: {cols}")
+        for r in rows[:50]:
+            click.echo(str(r))
+    finally:
+        if cur: cur.close()
+        if conn: mgr.release_connection(conn)
+
+
+@nlp.command("similar")
+@click.option("--incident-id", default=None)
+@click.option("--text", default=None)
+@click.option("--top-k", default=5, type=int)
+def nlp_similar(incident_id, text, top_k):
+    mgr = VerticaConnectionManager(VerticaConfig.from_env())
+    sim = SimilarIncidents(top_k=top_k)
+    res = sim.query(mgr, text=text, incident_id=incident_id)
+    for r in res:
+        click.echo(r)
+
+
+@click.command("serve-rest")
+@click.option("--host", default="0.0.0.0")
+@click.option("--port", default=8001, type=int)
+def serve_rest(host, port):
+    _serve_rest(host=host, port=port)
+
+
+@cli.command("seed-itsm")
+def seed_itsm():
+    from scripts.seed_itsm import main as seed_main
+    seed_main()
+
+
+cli.add_command(nlp)
+cli.add_command(serve_rest)
 
 if __name__ == "__main__":
     cli()

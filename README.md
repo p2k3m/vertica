@@ -1,255 +1,137 @@
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/nolleh-mcp-vertica-badge.png)](https://mseep.ai/app/nolleh-mcp-vertica)
+# mcp-vertica — Local NLP + REST for Vertica (no auth)
 
-# MCP Vertica
+This runs **entirely on your laptop**: Vertica CE via Docker, a local REST API, and a terminal **NLP→SQL** command powered by a local LLM (Ollama). No auth, bound on `0.0.0.0` for convenience.
 
-[![smithery badge](https://smithery.ai/badge/@nolleh/mcp-vertica)](https://smithery.ai/server/@nolleh/mcp-vertica)
+> ⚠️ Security is **intentionally disabled** for local demos. Do not expose to the public internet.
 
-A Vertica MCP(model-context-protocol) Server
+## Prerequisites
 
-> [!IMPORTANT]
-> If you have troubles to connect this mcp server, try to run `uv cache clean`, and then retry.
+- **Docker Desktop**
+- **Python 3.12+**
+- **uv** (recommended) or `pip`
+- **Ollama** (for local LLM)
+  - **Mac**: `brew install ollama` → `ollama serve &` → `ollama pull llama3.1:8b`
+  - **Windows**: install Ollama app → run “Ollama” → in PowerShell: `ollama pull llama3.1:8b`
+- (Optional) A Vertica instance; we provide Docker.
 
-### Example: MCP Server Setting
-
-Create or edit the file your mcp client config file with the following content:
-
-#### UVX
-
-```json
-{
-  "mcpServers": {
-    "vertica": {
-      "command": "uvx",
-      "args": ["mcp-vertica"],
-      "env": {
-        "VERTICA_HOST": "localhost",
-        "VERTICA_PORT": 5433,
-        "VERTICA_DATABASE": "VMart",
-        "VERTICA_USER": "dbadmin",
-        "VERTICA_PASSWORD": "test_password",
-        "VERTICA_CONNECTION_LIMIT": 10,
-        "VERTICA_SSL": false,
-        "VERTICA_SSL_REJECT_UNAUTHORIZED": true
-      }
-    }
-  }
-}
-```
-
-Or with args
-
-```json
-{
-  "mcpServers": {
-    "vertica": {
-      "command": "uvx",
-      "args": [
-        "mcp-vertica",
-        "--host=localhost",
-        "--db-port=5433",
-        "--database=VMart",
-        "--user=dbadmin",
-        "--password=test_password",
-        "--connection-limit=10"
-      ]
-    }
-  }
-}
-```
-
-
-#### Docker
-```json
-{
-  "mcpServers": {
-    "vertica": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "nolleh/mcp-vertica"],
-      "env": {
-        "VERTICA_HOST": "localhost",
-        "VERTICA_PORT": 5433,
-        "VERTICA_DATABASE": "VMart",
-        "VERTICA_USER": "dbadmin",
-        "VERTICA_PASSWORD": "test_password",
-        "VERTICA_CONNECTION_LIMIT": 10,
-        "VERTICA_SSL": false,
-        "VERTICA_SSL_REJECT_UNAUTHORIZED": true
-      }
-    }
-  }
-}
-```
-
-
-> [!Note]
->
-> - For boolean flags like `--ssl` or `--ssl-reject-unauthorized`, simply add the flag (e.g., `"--ssl"`) to enable it, or omit it to disable.
-> - For an empty password, use an empty string as shown above.
-
-## Features
-
-### Database Connection Management
-
-- Connection pooling with configurable limits
-- SSL/TLS support
-- Automatic connection cleanup
-- Connection timeout handling
-
-### Query Operations
-
-- Execute SQL queries
-- Stream large query results in batches
-- Copy data operations
-- Transaction management
-
-### Schema Management
-
-- Table structure inspection
-- Index management
-- View management
-- Constraint information
-- Column details
-
-### Security Features
-
-- Operation-level permissions (INSERT, UPDATE, DELETE, DDL)
-- Schema-specific permissions
-- SSL/TLS support
-- Password masking in logs
-
-## Tools
-
-### Database Operations
-
-1. `execute_query`
-
-   - Execute SQL queries
-   - Support for all SQL operations
-
-2. `stream_query`
-
-   - Stream large query results in batches
-   - Configurable batch size
-
-3. `copy_data`
-   - Bulk data loading using COPY command
-   - Efficient for large datasets
-
-### Schema Management
-
-1. `get_table_structure`
-
-   - Get detailed table structure
-   - Column information
-   - Constraints
-
-2. `list_indexes`
-
-   - List all indexes for a table
-   - Index type and uniqueness
-   - Column information
-
-3. `list_views`
-   - List all views in a schema
-   - View definitions
-
-## Configuration
-
-### Environment Variables
-
-```env
-VERTICA_HOST=localhost
-VERTICA_PORT=5433
-VERTICA_DATABASE=VMart
-VERTICA_USER=newdbadmin
-VERTICA_PASSWORD=vertica
-VERTICA_CONNECTION_LIMIT=10
-VERTICA_SSL=false
-VERTICA_SSL_REJECT_UNAUTHORIZED=true
-```
-
-### Operation Permissions
-
-```env
-ALLOW_INSERT_OPERATION=false
-ALLOW_UPDATE_OPERATION=false
-ALLOW_DELETE_OPERATION=false
-ALLOW_DDL_OPERATION=false
-```
-
-### Schema Permissions
-
-```env
-SCHEMA_INSERT_PERMISSIONS=schema1:true,schema2:false
-SCHEMA_UPDATE_PERMISSIONS=schema1:true,schema2:false
-SCHEMA_DELETE_PERMISSIONS=schema1:true,schema2:false
-SCHEMA_DDL_PERMISSIONS=schema1:true,schema2:false
-```
-
-## Installation
-
-### Installing via Smithery
-
-To install Vertica Database Connector for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@nolleh/mcp-vertica):
+## 1) Start Vertica locally
 
 ```bash
-npx -y @smithery/cli install @nolleh/mcp-vertica --client claude
+docker compose up -d
+# Wait until healthy (30–60s)
+docker ps
 ```
 
-### Installing Manually
+Defaults:
 
-Open your favorite mcp client's config file, then configure with `uvx mcp-vertica`
+Host: localhost
 
-[Example: Mcp Server Setting](#example%3A-mcp-server-setting)
+Port: 5433
 
-## Development
+Database: VMart
 
-#### Appendix: For Testing, VerticaDB Docker Compose Example
+User: dbadmin
 
-```yaml
-version: "3.8"
+Password: (empty)
 
-services:
-  vertica:
-    # image: vertica/vertica-ce:11.1.0-0
-    image: vertica/vertica-ce:latest
-    platform: linux/amd64
-    container_name: vertica-ce
-    environment:
-      VERTICA_MEMDEBUG: 2
-    ports:
-      - "5433:5433"
-      - "5444:5444"
-    volumes:
-      - vertica_data:/home/dbadmin/VMart
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "/opt/vertica/bin/vsql",
-          "-h",
-          "localhost",
-          "-d",
-          "VMart",
-          "-U",
-          "dbadmin",
-          "-c",
-          "SELECT 1",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    restart: unless-stopped
-
-volumes:
-  vertica_data:
-    driver: local
+## 2) Install & configure mcp-vertica
+```bash
+# Mac/Linux (uv)
+uv sync
+# Or pip:
+# python -m venv .venv && source .venv/bin/activate
+# pip install -e .
 ```
 
-Then run server by following instruction [Example: Mcp Server Setting](#example%3A-mcp-server-setting),
-Then see everything works as fine
+Set env (Mac/Linux bash or zsh):
+
+```bash
+export VERTICA_HOST=127.0.0.1
+export VERTICA_PORT=5433
+export VERTICA_DATABASE=VMart
+export VERTICA_USER=dbadmin
+export VERTICA_PASSWORD=""
+export VERTICA_CONNECTION_LIMIT=10
+```
+
+Windows (PowerShell):
+
+```powershell
+$env:VERTICA_HOST="127.0.0.1"
+$env:VERTICA_PORT="5433"
+$env:VERTICA_DATABASE="VMart"
+$env:VERTICA_USER="dbadmin"
+$env:VERTICA_PASSWORD=""
+$env:VERTICA_CONNECTION_LIMIT="10"
+```
+
+## 3) Seed ITSM/CMDB sample data
+```bash
+python scripts/seed_itsm.py
+# Creates schemas itsm/cmdb and loads ~2k incidents + CIs/changes/relations
+```
+
+## 4) REST API (no auth)
+```bash
+uvx mcp-vertica serve-rest --host 0.0.0.0 --port 8001
+```
+
+Test:
+
+```bash
+curl http://127.0.0.1:8001/api/health
+curl -X POST http://127.0.0.1:8001/api/query \
+  -H 'Content-Type: application/json' \
+  -d '{"sql":"SELECT COUNT(*) AS n FROM itsm.incident;"}'
+```
+
+NLP endpoint:
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/nlp \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"Top 5 incident categories this month", "execute": true}'
+```
+
+## 5) NLP from terminal
+
+Start Ollama in background (if not already):
+
+```bash
+ollama serve &
+ollama pull llama3.1:8b
+```
+
+Examples:
+
+```bash
+# Ask anything; will generate Vertica SQL and run it
+uvx mcp-vertica nlp ask "Top 5 incident categories this month by count"
+
+# Create a table (mutations allowed)
+uvx mcp-vertica nlp ask "Create table staging.high_prio_incidents as P1 incidents last 7 days"
+
+# Dry-run (just show SQL)
+uvx mcp-vertica nlp ask --dry-run "List incidents joined to CI class and change window overlap"
+
+# Similar incidents
+uvx mcp-vertica nlp similar --incident-id INC000123
+uvx mcp-vertica nlp similar --text "database timeout in payment service" --top-k 10
+```
+
+## 6) SSE MCP server (unchanged)
+```bash
+uvx mcp-vertica --port 8000  # runs SSE (0.0.0.0)
+```
+
+## Troubleshooting
+
+If MCP client can’t connect: uv cache clean and retry.
+
+If Vertica not ready: docker logs vertica-ce and re-run after healthy.
+
+If Ollama fails: ensure ollama serve is running and you pulled a model.
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT
