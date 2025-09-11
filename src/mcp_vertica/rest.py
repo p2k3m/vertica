@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Any, List, Optional
 from .connection import VerticaConnectionManager, VerticaConfig
-from .nlp import NL2SQL, SimilarIncidents
+from .nlp import NL2SQL
 import logging
 
 log = logging.getLogger("rest")
