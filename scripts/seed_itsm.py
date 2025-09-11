@@ -76,7 +76,9 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         if conn: mgr.release_connection(conn)
 
 def main():
-    mgr = VerticaConnectionManager(VerticaConfig.from_env())
+    cfg = VerticaConfig.from_env()
+    mgr = VerticaConnectionManager()
+    mgr.initialize_default(cfg)
     ensure_schema_and_tables(mgr)
     synthesize_and_load(mgr, 2000)
     print("Seed complete.")
