@@ -215,16 +215,22 @@ def nlp_ask(question, execute, model, ollama_host):
     try:
         conn = mgr.get_connection()
         cur = conn.cursor()
-        cur.execute(sql)
-        if cur.description:
-            rows = cur.fetchall()
-            cols = [d[0] for d in cur.description]
-            click.echo(f"Columns: {cols}")
-            for r in rows[:50]:
-                click.echo(str(r))
-        else:
-            conn.commit()
-            click.echo("Statement executed and committed.")
+        try:
+            cur.execute(sql)
+            if cur.description:
+                rows = cur.fetchall()
+                cols = [d[0] for d in cur.description]
+                click.echo(f"Columns: {cols}")
+                for r in rows[:50]:
+                    click.echo(str(r))
+            else:
+                conn.commit()
+                click.echo("Statement executed and committed.")
+        except Exception as e:
+            conn.rollback()
+            logger.error(f"Error executing SQL: {e}")
+            click.echo(f"Error executing SQL: {e}", err=True)
+            return
     finally:
         if cur: cur.close()
         if conn: mgr.release_connection(conn)
