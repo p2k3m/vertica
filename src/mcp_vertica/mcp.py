@@ -149,7 +149,7 @@ async def execute_query(ctx: Context, query: str) -> str:
 async def stream_query(
     ctx: Context, query: str, batch_size: int = 1000
 ) -> str:
-    """Execute a SQL query and return the results in batches as a single string.
+    """Execute a SQL query and stream results in batches.
 
     Args:
         ctx: FastMCP context for progress reporting and logging
@@ -157,7 +157,7 @@ async def stream_query(
         batch_size: Number of rows to fetch at once
 
     Returns:
-        Query results as a concatenated string
+        Completion message or metadata about the stream
     """
     await ctx.info(f"Executing query with batching: {query}")
 
@@ -183,18 +183,24 @@ async def stream_query(
         cursor = conn.cursor()
         cursor.execute(query)
 
-        all_results = []
         total_rows = 0
+
+        # Send column information first, if available
+        if cursor.description:
+            cols = [d[0] for d in cursor.description]
+            await ctx.send(json.dumps({"columns": cols}))
+
         while True:
             batch = cursor.fetchmany(batch_size)
             if not batch:
                 break
             total_rows += len(batch)
             await ctx.debug(f"Fetched {total_rows} rows")
-            all_results.extend(batch)
+            # Stream each batch as JSON
+            await ctx.send(json.dumps([list(r) for r in batch]))
 
         await ctx.info(f"Query completed, total rows: {total_rows}")
-        return str(all_results)
+        return json.dumps({"rows_streamed": total_rows})
     except Exception as e:
         error_msg = f"Error executing query: {str(e)}"
         await ctx.error(error_msg)
