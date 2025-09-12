@@ -265,6 +265,9 @@ class VerticaConnectionManager:
         if not self.config:
             return False
 
+        # Normalize schema name for case-insensitive comparisons
+        schema = schema.lower()
+
         # Get schema permissions
         schema_permissions = self.config.schema_permissions or {}
         schema_perms = schema_permissions.get(schema)
