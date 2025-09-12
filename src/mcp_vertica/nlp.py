@@ -107,7 +107,10 @@ Return only SQL."""
             data = r.json()
         except ValueError as e:
             raise RuntimeError("Failed to parse NL2SQL response") from e
-        text = data.get("response", "").strip()
+        text = data.get("response")
+        if not text:
+            raise RuntimeError("NL2SQL service returned no SQL")
+        text = text.strip()
         # Extract the first semicolon-terminated SQL if model babbles
         m = re.search(r"(?is)(.*?;)", text)
         return (m.group(1) if m else text).strip()
