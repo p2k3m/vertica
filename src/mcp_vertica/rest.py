@@ -83,7 +83,12 @@ def api_query(body: QueryIn):
             conn.commit()
             rows = []
             cols = []
-        return {"columns": cols, "rows": [list(r) for r in rows]}
+        serialized_rows = [
+            [str(cell) if cell is not None else None for cell in row]
+            for row in rows
+        ]
+        serialized_cols = [str(c) for c in cols]
+        return {"columns": serialized_cols, "rows": serialized_rows}
     except Exception as e:
         if conn:
             conn.rollback()
@@ -141,7 +146,12 @@ def api_nlp(body: NLPIn):
             conn.commit()
             rows = []
             cols = []
-        return {"sql": sql, "columns": cols, "rows": [list(r) for r in rows]}
+        serialized_rows = [
+            [str(cell) if cell is not None else None for cell in row]
+            for row in rows
+        ]
+        serialized_cols = [str(c) for c in cols]
+        return {"sql": sql, "columns": serialized_cols, "rows": serialized_rows}
     except Exception as e:
         if conn:
             conn.rollback()
