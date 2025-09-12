@@ -241,9 +241,10 @@ async def copy_data(
         writer.writerows(data)
         output.seek(0)
 
-        # Create COPY command
-        copy_query = f"""COPY {table} FROM STDIN DELIMITER ',' ENCLOSED BY '\"'"""
-        cursor.copy(copy_query, output.getvalue())
+        # Create COPY command including schema and stream data from buffer
+        copy_query = f"COPY {schema}.{table} FROM STDIN DELIMITER ',' ENCLOSED BY '"'"
+        output.seek(0)
+        cursor.copy(copy_query, output)
         conn.commit()
 
         success_msg = f"Successfully copied {len(data)} rows to {table}"
