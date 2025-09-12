@@ -208,6 +208,7 @@ async def execute_query(ctx: Context, query: str) -> str:
                 rows = cursor.fetchall()
                 cols = [d[0] for d in cursor.description]
             else:
+                rows, cols = [], []
                 conn.commit()
         await ctx.info(f"Query executed successfully, returned {len(rows)} rows")
         return json.dumps({"columns": cols, "rows": [list(r) for r in rows]})
