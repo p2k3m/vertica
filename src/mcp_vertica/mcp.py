@@ -253,6 +253,8 @@ async def copy_data(
     except Exception as e:
         error_msg = f"Error copying data: {str(e)}"
         await ctx.error(error_msg)
+        if conn:
+            conn.rollback()
         return error_msg
     finally:
         if cursor:
