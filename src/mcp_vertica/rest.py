@@ -48,6 +48,8 @@ def health():
 def api_query(body: QueryIn):
     mgr = connection_manager
     statements = [s.strip() for s in sqlparse.split(body.sql) if s.strip()]
+    if not statements:
+        raise HTTPException(status_code=400, detail="No SQL statements provided")
 
     for stmt in statements:
         schemas = extract_schema_from_query(stmt)
@@ -101,6 +103,8 @@ def api_nlp(body: NLPIn):
         return {"sql": sql, "columns": [], "rows": []}
 
     statements = [s.strip() for s in sqlparse.split(sql) if s.strip()]
+    if not statements:
+        raise HTTPException(status_code=400, detail="No SQL statements provided")
 
     for stmt in statements:
         schemas = extract_schema_from_query(stmt)
