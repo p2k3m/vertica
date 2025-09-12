@@ -184,12 +184,31 @@ class VerticaConnectionPool:
         logger.info(
             f"Initializing Vertica connection pool with {self.config.connection_limit} connections"
         )
+        created_connections = []
         for _ in range(self.config.connection_limit):
             try:
                 conn = vertica_python.connect(**self._get_connection_config())
                 self.pool.put(conn)
+                created_connections.append(conn)
             except Exception as e:
                 logger.error(f"Failed to create connection: {str(e)}")
+                # Close any connections that were successfully created
+                for created_conn in created_connections:
+                    try:
+                        created_conn.close()
+                    except Exception as close_error:
+                        logger.error(
+                            "Error closing connection during pool initialization: %s",
+                            close_error,
+                        )
+                # Ensure the queue is empty
+                while not self.pool.empty():
+                    try:
+                        self.pool.get_nowait()
+                    except Exception:
+                        break
+                # Reset active connection count
+                self.active_connections = 0
                 raise
 
     def get_connection(self) -> vertica_python.Connection:
