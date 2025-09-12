@@ -21,6 +21,7 @@ VERTICA_SSL_REJECT_UNAUTHORIZED = "VERTICA_SSL_REJECT_UNAUTHORIZED"
 logger = logging.getLogger("mcp-vertica")
 
 class OperationType(Enum):
+    SELECT = auto()
     INSERT = auto()
     UPDATE = auto()
     DELETE = auto()
@@ -28,6 +29,7 @@ class OperationType(Enum):
 
 @dataclass
 class SchemaPermissions:
+    select: bool = False
     insert: bool = False
     update: bool = False
     delete: bool = False
@@ -44,6 +46,7 @@ class VerticaConfig:
     ssl: bool = False
     ssl_reject_unauthorized: bool = True
     # Global operation permissions
+    allow_select: bool = True
     allow_insert: bool = False
     allow_update: bool = False
     allow_delete: bool = False
@@ -61,6 +64,7 @@ class VerticaConfig:
         # Parse schema permissions
         schema_permissions = {}
         for schema_perm in [
+            ("SCHEMA_SELECT_PERMISSIONS", "select"),
             ("SCHEMA_INSERT_PERMISSIONS", "insert"),
             ("SCHEMA_UPDATE_PERMISSIONS", "update"),
             ("SCHEMA_DELETE_PERMISSIONS", "delete"),
@@ -97,6 +101,7 @@ class VerticaConfig:
             connection_limit=int(os.getenv("VERTICA_CONNECTION_LIMIT", "10")),
             ssl=os.getenv("VERTICA_SSL", "false").lower() == "true",
             ssl_reject_unauthorized=os.getenv("VERTICA_SSL_REJECT_UNAUTHORIZED", "true").lower() == "true",
+            allow_select=os.getenv("ALLOW_SELECT_OPERATION", "true").lower() == "true",
             allow_insert=os.getenv("ALLOW_INSERT_OPERATION", "false").lower() == "true",
             allow_update=os.getenv("ALLOW_UPDATE_OPERATION", "false").lower() == "true",
             allow_delete=os.getenv("ALLOW_DELETE_OPERATION", "false").lower() == "true",
@@ -317,6 +322,8 @@ class VerticaConnectionManager:
 
         # Check schema-specific permissions first
         if schema_perms:
+            if operation == OperationType.SELECT:
+                return schema_perms.select
             if operation == OperationType.INSERT:
                 return schema_perms.insert
             elif operation == OperationType.UPDATE:
@@ -327,7 +334,9 @@ class VerticaConnectionManager:
                 return schema_perms.ddl
 
         # Fall back to global permissions
-        if operation == OperationType.INSERT:
+        if operation == OperationType.SELECT:
+            return self.config.allow_select
+        elif operation == OperationType.INSERT:
             return self.config.allow_insert
         elif operation == OperationType.UPDATE:
             return self.config.allow_update
