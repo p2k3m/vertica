@@ -92,6 +92,12 @@ class VerticaConfig:
                         value.strip().lower() == 'true',
                     )
 
+        if not schema_permissions:
+            logger.info(
+                "No schema-specific permissions configured; defaulting to global settings "
+                "for SELECT, INSERT, UPDATE, DELETE, and DDL operations."
+            )
+
         return cls(
             host=os.getenv("VERTICA_HOST", "localhost"),
             port=int(os.getenv("VERTICA_PORT", "5433")),
