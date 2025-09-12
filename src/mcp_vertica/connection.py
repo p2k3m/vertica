@@ -146,10 +146,22 @@ class VerticaConnectionPool:
 
     def _initialize_pool(self):
         """Initialize or rebuild the connection pool."""
-        # If the pool already has connections or active connections are being tracked,
-        # we are rebuilding after a failure. Close existing idle connections and reset
-        # the accounting so we start fresh.
-        if not self.pool.empty() or self.active_connections:
+        # Close any connections that are currently checked out
+        for conn in list(self.checked_out_connections):
+            try:
+                conn.close()
+            except Exception as e:
+                logger.error(
+                    "Error closing checked-out connection during pool rebuild: %s", e
+                )
+
+        # Clear checked out connections and reset the active connection count
+        self.checked_out_connections.clear()
+        self.active_connections = 0
+
+        # If the pool already has connections, we are rebuilding after a failure.
+        # Close existing idle connections and reset the accounting so we start fresh.
+        if not self.pool.empty():
             logger.warning(
                 "Rebuilding Vertica connection pool; closing existing idle connections",
             )
