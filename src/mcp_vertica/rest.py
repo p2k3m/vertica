@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Any, List
 from .connection import VerticaConnectionManager, VerticaConfig
 from .nlp import NL2SQL
+from .mcp import extract_schema_from_query, extract_operation_type
 import logging
 
 log = logging.getLogger("rest")
@@ -45,6 +46,12 @@ def health():
 @app.post("/api/query", response_model=QueryOut)
 def api_query(body: QueryIn):
     mgr = connection_manager
+    schemas = extract_schema_from_query(body.sql)
+    operation = extract_operation_type(body.sql)
+    if operation:
+        for schema in schemas or {"default"}:
+            if not connection_manager.is_operation_allowed(schema.lower(), operation):
+                raise HTTPException(status_code=403, detail=f"Operation {operation.name} not allowed for schema {schema}")
     conn = cur = None
     try:
         conn = mgr.get_connection()
@@ -74,6 +81,12 @@ def api_nlp(body: NLPIn):
     sql = n2s.generate_sql(mgr, body.question)
     if not body.execute:
         return {"sql": sql, "columns": [], "rows": []}
+    schemas = extract_schema_from_query(sql)
+    operation = extract_operation_type(sql)
+    if operation:
+        for schema in schemas or {"default"}:
+            if not connection_manager.is_operation_allowed(schema.lower(), operation):
+                raise HTTPException(status_code=403, detail=f"Operation {operation.name} not allowed for schema {schema}")
     conn = cur = None
     try:
         conn = mgr.get_connection()
