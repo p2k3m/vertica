@@ -210,6 +210,7 @@ def nlp_ask(question, execute, model, ollama_host):
     sql = n2s.generate_sql(mgr, q)
     click.echo(f"SQL:\n{sql}")
     if not execute:
+        mgr.close_all()
         return
     conn = cur = None
     try:
@@ -230,10 +231,12 @@ def nlp_ask(question, execute, model, ollama_host):
             conn.rollback()
             logger.error(f"Error executing SQL: {e}")
             click.echo(f"Error executing SQL: {e}", err=True)
-            return
     finally:
-        if cur: cur.close()
-        if conn: mgr.release_connection(conn)
+        if cur:
+            cur.close()
+        if conn:
+            mgr.release_connection(conn)
+    mgr.close_all()
 
 
 @nlp.command("similar")
