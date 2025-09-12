@@ -113,6 +113,8 @@ class SimilarIncidents:
                 results.append({"id": corpus_ids[i], "similarity": float(sims[i])})
                 if len(results) == self.top_k:
                     break
+            if not results:
+                return []
             # Fetch fix notes/status for output
             ids = ",".join("'" + r["id"] + "'" for r in results)
             cur.execute(f"SELECT id, status, closed_at, assignment_group, short_desc FROM itsm.incident WHERE id IN ({ids})")
