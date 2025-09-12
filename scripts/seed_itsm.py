@@ -15,7 +15,8 @@ CATS = ["Database", "Network", "Application", "Security", "Storage", "OS"]
 
 def rows_to_buffer(write_rows):
     buf = io.StringIO()
-    writer = csv.writer(buf, lineterminator="\n")
+    # Quote all fields so COPY ... ENCLOSED BY '"' works regardless of content
+    writer = csv.writer(buf, lineterminator="\n", quoting=csv.QUOTE_ALL)
 
     def write_row(row):
         writer.writerow(["\\N" if v is None else v for v in row])
