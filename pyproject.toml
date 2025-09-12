@@ -15,6 +15,7 @@ dependencies = [
     "pandas>=2.2",
     "scikit-learn>=1.5",
     "numpy>=1.26",
+    "sqlparse>=0.5.3",
 ]
 
 [[project.authors]]

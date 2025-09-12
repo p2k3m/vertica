@@ -4,6 +4,8 @@ from mcp.server.fastmcp import FastMCP, Context
 import logging
 import re
 import json
+import sqlparse
+from sqlparse.sql import Identifier, IdentifierList
 from .connection import VerticaConnectionManager, VerticaConfig, OperationType
 from starlette.applications import Starlette
 from starlette.routing import Mount
@@ -29,13 +31,47 @@ def extract_operation_type(query: str) -> OperationType | None:
     return None
 
 
-def extract_schema_from_query(query: str) -> str | None:
-    """Extract schema name from a SQL query."""
-    # database.table 또는 schema.table 패턴에서 schema 추출
-    match = re.search(r"([a-zA-Z0-9_]+)\.[a-zA-Z0-9_]+", query)
-    if match:
-        return match.group(1)
-    return None
+def extract_schema_from_query(query: str) -> set[str]:
+    """Extract all schema names from a SQL query.
+
+    Uses ``sqlparse`` to walk the parsed tokens and collect schema-qualified
+    table references. Falls back to a regex for simple ``schema.table``
+    patterns. Quoted identifiers are supported.
+
+    Args:
+        query: SQL query to analyze.
+
+    Returns:
+        Set of unique schema names referenced in the query.
+    """
+
+    schemas: set[str] = set()
+
+    def _extract(token: sqlparse.sql.Token) -> None:
+        if isinstance(token, IdentifierList):
+            for identifier in token.get_identifiers():
+                _extract(identifier)
+        elif isinstance(token, Identifier):
+            schema = token.get_parent_name()
+            if schema:
+                schemas.add(schema.strip('"'))
+        elif getattr(token, "is_group", False):
+            for t in token.tokens:
+                _extract(t)
+
+    for statement in sqlparse.parse(query):
+        for token in statement.tokens:
+            _extract(token)
+
+    # Fallback to regex for any remaining simple patterns
+    if not schemas:
+        pattern = r'(?:"([^"]+)"|([a-zA-Z_][a-zA-Z0-9_]*))\s*\.\s*(?:"[^"]+"|[a-zA-Z_][a-zA-Z0-9_]*)'
+        for match in re.findall(pattern, query):
+            schema = match[0] or match[1]
+            if schema:
+                schemas.add(schema)
+
+    return schemas
 
 
 @asynccontextmanager
@@ -109,14 +145,17 @@ async def execute_query(ctx: Context, query: str) -> str:
         await ctx.error("No database connection manager available")
         return "Error: No database connection manager available"
 
-    # Extract schema from query if not provided
-    schema = extract_schema_from_query(query)
+    # Extract all referenced schemas from the query
+    schemas = extract_schema_from_query(query)
     # Check operation permissions
     operation = extract_operation_type(query)
-    if operation and not manager.is_operation_allowed(schema=schema or "default", operation=operation):
-        error_msg = f"Operation {operation.name} not allowed for schema {schema}"
-        await ctx.error(error_msg)
-        return error_msg
+    if operation:
+        schemas_to_check = schemas or {"default"}
+        for schema in schemas_to_check:
+            if not manager.is_operation_allowed(schema=schema, operation=operation):
+                error_msg = f"Operation {operation.name} not allowed for schema {schema}"
+                await ctx.error(error_msg)
+                return error_msg
 
     conn = None
     cursor = None
@@ -167,14 +206,17 @@ async def stream_query(
         await ctx.error("No database connection manager available")
         return "Error: No database connection manager available"
 
-    # Extract schema from query if not provided
-    schema = extract_schema_from_query(query)
+    # Extract all referenced schemas from the query
+    schemas = extract_schema_from_query(query)
     # Check operation permissions
     operation = extract_operation_type(query)
-    if operation and not manager.is_operation_allowed(schema=schema or "default", operation=operation):
-        error_msg = f"Operation {operation.name} not allowed for schema {schema}"
-        await ctx.error(error_msg)
-        return error_msg
+    if operation:
+        schemas_to_check = schemas or {"default"}
+        for schema in schemas_to_check:
+            if not manager.is_operation_allowed(schema=schema, operation=operation):
+                error_msg = f"Operation {operation.name} not allowed for schema {schema}"
+                await ctx.error(error_msg)
+                return error_msg
 
     conn = None
     cursor = None
@@ -254,7 +296,7 @@ async def copy_data(
         output.seek(0)
 
         # Create COPY command including schema and stream data from buffer
-        copy_query = f"COPY {schema}.{table} FROM STDIN DELIMITER ',' ENCLOSED BY '"'"
+        copy_query = f"COPY {schema}.{table} FROM STDIN DELIMITER ',' ENCLOSED BY '\"'"
         output.seek(0)
         cursor.copy(copy_query, output)
         conn.commit()
