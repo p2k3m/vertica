@@ -129,7 +129,25 @@ class VerticaConnectionPool:
         return safe_config
 
     def _initialize_pool(self):
-        """Initialize the connection pool with the specified number of connections."""
+        """Initialize or rebuild the connection pool."""
+        # If the pool already has connections or active connections are being tracked,
+        # we are rebuilding after a failure. Close existing idle connections and reset
+        # the accounting so we start fresh.
+        if not self.pool.empty() or self.active_connections:
+            logger.warning(
+                "Rebuilding Vertica connection pool; closing existing idle connections",
+            )
+            while not self.pool.empty():
+                try:
+                    conn = self.pool.get_nowait()
+                    conn.close()
+                except Exception as e:
+                    logger.error(
+                        "Error closing connection during pool rebuild: %s", e
+                    )
+            # Reset connection count since all existing connections are closed
+            self.active_connections = 0
+
         logger.info(
             f"Initializing Vertica connection pool with {self.config.connection_limit} connections"
         )
@@ -152,7 +170,9 @@ class VerticaConnectionPool:
                 self.active_connections += 1
                 return conn
             except Exception as e:
-                logger.error(f"Failed to get connection from pool: {str(e)}")
+                logger.error(
+                    "Failed to get connection from pool: %s. Rebuilding pool.", e
+                )
                 self._initialize_pool()
                 raise
 
