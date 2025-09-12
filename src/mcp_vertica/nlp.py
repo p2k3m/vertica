@@ -1,4 +1,5 @@
-import requests, json, re
+import requests
+import re
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
 from .connection import VerticaConnectionManager
@@ -101,8 +102,6 @@ class SimilarIncidents:
                 seed_txt = text
             vec = TfidfVectorizer(min_df=2, max_features=5000)
             X = vec.fit_transform(corpus_txt)
-            from scipy.sparse import vstack
-            import numpy as np
             xq = vec.transform([seed_txt])
             sims = cosine_similarity(xq, X).ravel()
             top_idx = sims.argsort()[::-1][: self.top_k + 1]
