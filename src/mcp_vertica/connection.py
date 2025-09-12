@@ -244,6 +244,8 @@ class VerticaConnectionManager:
         """Initialize the connection pool."""
         self.config = config
         self.is_multi_db_mode = not config.database
+        if self.pool:
+            self.pool.close_all()
         self.pool = VerticaConnectionPool(config)
 
     def get_connection(self) -> vertica_python.Connection:
