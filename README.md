@@ -22,6 +22,8 @@ docker compose up -d
 docker ps
 ```
 
+See [Vertica container lifecycle](#vertica-container-lifecycle) for log inspection, shutdown, and database verification commands.
+
 Defaults:
 
 Host: localhost
@@ -147,6 +149,32 @@ uvx mcp-vertica nlp similar --text "database timeout in payment service" --top-k
 ## 6) SSE MCP server (unchanged)
 ```bash
 uvx mcp-vertica --port 8000  # runs SSE (0.0.0.0)
+```
+
+## Vertica container lifecycle
+
+Start the Vertica container:
+
+```bash
+docker compose up -d
+```
+
+Follow logs until the database is ready:
+
+```bash
+docker compose logs -f vertica
+```
+
+Verify connectivity:
+
+```bash
+docker exec vertica-ce vsql -U dbadmin -d VMart -c "SELECT 1"
+```
+
+Shut down the container:
+
+```bash
+docker compose down
 ```
 
 ## Troubleshooting
