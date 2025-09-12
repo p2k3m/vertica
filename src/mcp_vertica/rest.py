@@ -14,6 +14,14 @@ app = FastAPI(title="mcp-vertica (local, no-auth)")
 connection_manager: VerticaConnectionManager = VerticaConnectionManager()
 
 
+def _status_from_exception(e: Exception) -> int:
+    """Return HTTP status code for given exception."""
+    msg = str(e).lower()
+    if isinstance(e, ValueError) or "syntax" in msg or "invalid" in msg:
+        return 400
+    return 500
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     cfg = VerticaConfig.from_env()
@@ -92,7 +100,8 @@ def api_query(body: QueryIn):
     except Exception as e:
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        status_code = _status_from_exception(e)
+        raise HTTPException(status_code=status_code, detail=str(e))
     finally:
         if cur:
             cur.close()
@@ -155,7 +164,8 @@ def api_nlp(body: NLPIn):
     except Exception as e:
         if conn:
             conn.rollback()
-        raise HTTPException(status_code=400, detail=f"{e} (sql={sql})")
+        status_code = _status_from_exception(e)
+        raise HTTPException(status_code=status_code, detail=f"{e} (sql={sql})")
     finally:
         if cur:
             cur.close()
