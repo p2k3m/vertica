@@ -8,16 +8,19 @@ from mcp_vertica.connection import VerticaConnectionManager, VerticaConfig
 
 CI_CLASSES = ["APP", "DB", "VM", "NETWORK", "STORAGE"]
 ENV = ["PROD", "PREPROD", "QA", "DEV"]
-PRIO = ["P1","P2","P3","P4"]
-STATUS = ["OPEN","ASSIGNED","IN_PROGRESS","RESOLVED","CLOSED"]
-REL = ["DEPENDS_ON","RUNS_ON","HOSTED_ON"]
-CATS = ["Database","Network","Application","Security","Storage","OS"]
+PRIO = ["P1", "P2", "P3", "P4"]
+STATUS = ["OPEN", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "CLOSED"]
+REL = ["DEPENDS_ON", "RUNS_ON", "HOSTED_ON"]
+CATS = ["Database", "Network", "Application", "Security", "Storage", "OS"]
 
-def rows_to_buffer(rows):
+def rows_to_buffer(write_rows):
     buf = io.StringIO()
     writer = csv.writer(buf, lineterminator="\n")
-    for row in rows:
+
+    def write_row(row):
         writer.writerow(["\\N" if v is None else v for v in row])
+
+    write_rows(write_row)
     buf.seek(0)
     return buf
 
@@ -40,8 +43,10 @@ def ensure_schema_and_tables(mgr: VerticaConnectionManager):
             conn.rollback()
             raise
     finally:
-        if cur: cur.close()
-        if conn: mgr.release_connection(conn)
+        if cur:
+            cur.close()
+        if conn:
+            mgr.release_connection(conn)
 
 def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
     # synthesize CI / CI relations / changes / incidents
@@ -49,44 +54,49 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
     try:
         conn = mgr.get_connection()
         cur = conn.cursor()
-        # CIS
-        cis = []
+        cis: list[tuple] = []
         ci_ids = set()
-        for i in range(200):
-            cid = _rand_id("CI", 6)
-            while cid in ci_ids:
+
+        def write_cis(write_row):
+            for i in range(200):
                 cid = _rand_id("CI", 6)
-            ci_ids.add(cid)
-            cis.append((cid, f"ci-{i}", random.choice(CI_CLASSES), random.choice(ENV), "owner@example.com", random.choice(["LOW","MEDIUM","HIGH"])))
-        try:
-            buf = rows_to_buffer(cis)
-            cur.copy(
-                "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
-                buf,
-            )
-        except Exception:
-            conn.rollback()
-            raise
-        # CI relations
-        def gen_rels():
+                while cid in ci_ids:
+                    cid = _rand_id("CI", 6)
+                ci_ids.add(cid)
+                row = (
+                    cid,
+                    f"ci-{i}",
+                    random.choice(CI_CLASSES),
+                    random.choice(ENV),
+                    "owner@example.com",
+                    random.choice(["LOW", "MEDIUM", "HIGH"]),
+                )
+                cis.append(row)
+                write_row(row)
+
+        buf = rows_to_buffer(write_cis)
+        cur.copy(
+            "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
+            buf,
+        )
+
+        def write_rels(write_row):
             for _ in range(400):
                 p = random.choice(cis)[0]
                 c = random.choice(cis)[0]
                 if p != c:
-                    yield (p, random.choice(REL), c)
-        try:
-            buf = rows_to_buffer(gen_rels())
-            cur.copy(
-                "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
-                buf,
-            )
-        except Exception:
-            conn.rollback()
-            raise
-        # Changes
+                    write_row((p, random.choice(REL), c))
+
+        buf = rows_to_buffer(write_rels)
+        cur.copy(
+            "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
+            buf,
+        )
+
         base = dt.datetime.now() - dt.timedelta(days=90)
         change_ids = set()
-        def gen_changes():
+
+        def write_changes(write_row):
             for i in range(500):
                 chid = _rand_id("CHG", 6)
                 while chid in change_ids:
@@ -94,71 +104,83 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 change_ids.add(chid)
                 requested_at = base + dt.timedelta(days=random.randint(0, 60))
                 wstart = base + dt.timedelta(days=random.randint(0, 60))
-                wend = wstart + dt.timedelta(hours=random.choice([1,2,4]))
-                yield (
-                    chid,
-                    requested_at,
-                    wstart,
-                    wend,
-                    random.choice(["LOW","MEDIUM","HIGH"]),
-                    random.choice(["SCHEDULED","IMPLEMENTED","FAILED"]),
-                    f"Change {i}",
-                    random.choice(cis)[0],
+                wend = wstart + dt.timedelta(hours=random.choice([1, 2, 4]))
+                write_row(
+                    (
+                        chid,
+                        requested_at,
+                        wstart,
+                        wend,
+                        random.choice(["LOW", "MEDIUM", "HIGH"]),
+                        random.choice(["SCHEDULED", "IMPLEMENTED", "FAILED"]),
+                        f"Change {i}",
+                        random.choice(cis)[0],
+                    )
                 )
-        try:
-            buf = rows_to_buffer(gen_changes())
-            cur.copy(
-                "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
-                buf,
-            )
-        except Exception:
-            conn.rollback()
-            raise
-        # Incidents
+
+        buf = rows_to_buffer(write_changes)
+        cur.copy(
+            "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
+            buf,
+        )
+
         incident_ids = set()
-        def gen_incidents():
+
+        def write_incidents(write_row):
             for i in range(n_incidents):
                 iid = _rand_id("INC", 6)
                 while iid in incident_ids:
                     iid = _rand_id("INC", 6)
                 incident_ids.add(iid)
                 opened = base + dt.timedelta(days=random.randint(0, 60))
-                closed = opened + dt.timedelta(hours=random.randint(1,72)) if random.random() > 0.3 else None
-                txt = random.choice([
-                    "DB connection timeout on payment service",
-                    "High CPU on VM during backup window",
-                    "Network packet loss between AZs",
-                    "App 500 errors after deploy",
-                    "Slow query on orders table",
-                    "Disk latency spike on storage node",
-                    "SSL cert mismatch on gateway",
-                    "Pods evicted due to memory pressure"
-                ])
-                yield (
-                    iid,
-                    opened,
-                    random.choice(PRIO),
-                    random.choice(CATS),
-                    random.choice(["DBA","NETOPS","APPENG","SECOPS"]),
-                    txt[:80],
-                    txt,
-                    random.choice(STATUS),
-                    closed,
-                    random.choice(cis)[0],
+                closed = (
+                    opened + dt.timedelta(hours=random.randint(1, 72))
+                    if random.random() > 0.3
+                    else None
                 )
-        try:
-            buf = rows_to_buffer(gen_incidents())
-            cur.copy(
-                "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
-                buf,
-            )
-        except Exception:
-            conn.rollback()
-            raise
+                txt = random.choice(
+                    [
+                        "DB connection timeout on payment service",
+                        "High CPU on VM during backup window",
+                        "Network packet loss between AZs",
+                        "App 500 errors after deploy",
+                        "Slow query on orders table",
+                        "Disk latency spike on storage node",
+                        "SSL cert mismatch on gateway",
+                        "Pods evicted due to memory pressure",
+                    ]
+                )
+                write_row(
+                    (
+                        iid,
+                        opened,
+                        random.choice(PRIO),
+                        random.choice(CATS),
+                        random.choice(["DBA", "NETOPS", "APPENG", "SECOPS"]),
+                        txt[:80],
+                        txt,
+                        random.choice(STATUS),
+                        closed,
+                        random.choice(cis)[0],
+                    )
+                )
+
+        buf = rows_to_buffer(write_incidents)
+        cur.copy(
+            "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
+            buf,
+        )
+
         conn.commit()
+    except Exception:
+        if conn:
+            conn.rollback()
+        raise
     finally:
-        if cur: cur.close()
-        if conn: mgr.release_connection(conn)
+        if cur:
+            cur.close()
+        if conn:
+            mgr.release_connection(conn)
 
 def main():
     cfg = VerticaConfig.from_env()
