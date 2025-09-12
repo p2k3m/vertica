@@ -116,23 +116,23 @@ class SimilarIncidents:
         try:
             conn = mgr.get_connection()
             cur = conn.cursor()
+            cur.execute(
+                "SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt FROM itsm.incident"
+            )
+            rows = cur.fetchall()
+            corpus_ids = [r[0] for r in rows]
+            corpus_txt = [r[1] for r in rows]
+            if len(corpus_txt) < 2:
+                return []
             if incident_id:
-                cur.execute("SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt FROM itsm.incident")
-                rows = cur.fetchall()
-                corpus_ids = [r[0] for r in rows]
-                corpus_txt = [r[1] for r in rows]
                 if incident_id not in corpus_ids:
                     raise ValueError(f"Incident {incident_id} not found")
                 seed_txt = corpus_txt[corpus_ids.index(incident_id)]
             else:
                 if not text:
                     raise ValueError("Provide text or incident_id")
-                cur.execute("SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt FROM itsm.incident")
-                rows = cur.fetchall()
-                corpus_ids = [r[0] for r in rows]
-                corpus_txt = [r[1] for r in rows]
                 seed_txt = text
-            vec = TfidfVectorizer(min_df=2, max_features=5000)
+            vec = TfidfVectorizer(min_df=min(2, len(corpus_txt)), max_features=5000)
             X = vec.fit_transform(corpus_txt)
             xq = vec.transform([seed_txt])
             sims = cosine_similarity(xq, X).ravel()
@@ -154,7 +154,16 @@ class SimilarIncidents:
                 [r["id"] for r in results],
             )
             recs = cur.fetchall()
-            by_id = {r[0]: {"id": r[0], "status": r[1], "closed_at": r[2], "assignment_group": r[3], "short_desc": r[4]} for r in recs}
+            by_id = {
+                r[0]: {
+                    "id": r[0],
+                    "status": r[1],
+                    "closed_at": r[2],
+                    "assignment_group": r[3],
+                    "short_desc": r[4],
+                }
+                for r in recs
+            }
             for r in results:
                 r.update(by_id.get(r["id"], {}))
             return results
