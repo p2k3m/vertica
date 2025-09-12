@@ -324,6 +324,13 @@ async def copy_data(
 
     conn = None
     cursor = None
+    # Validate identifiers before constructing the COPY query
+    ident_pattern = r"^[A-Za-z_][A-Za-z0-9_]*$"
+    if not re.match(ident_pattern, schema):
+        raise ValueError(f"Invalid schema name: {schema}")
+    if not re.match(ident_pattern, table):
+        raise ValueError(f"Invalid table name: {table}")
+
     try:
         conn = manager.get_connection()
         cursor = conn.cursor()
