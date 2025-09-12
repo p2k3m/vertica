@@ -97,13 +97,17 @@ def extract_schema_from_query(query: str) -> set[str]:
         for token in statement.tokens:
             _extract(token)
 
-    # Fallback to regex for any remaining simple patterns
-    if not schemas:
-        pattern = r'(?:"([^"]+)"|([a-zA-Z_][a-zA-Z0-9_]*))\s*\.\s*(?:"[^"]+"|[a-zA-Z_][a-zA-Z0-9_]*)'
-        for match in re.findall(pattern, query):
-            schema = match[0] or match[1]
-            if schema:
-                schemas.add(schema)
+    # Fallback to regex for simple patterns
+    pattern = (
+        r'(?:"([^"]+)"|([a-zA-Z_][a-zA-Z0-9_]*))\s*\.\s*'
+        r'(?:"[^"]+"|[a-zA-Z_][a-zA-Z0-9_]*)'
+    )
+    regex_schemas = {
+        m[0] or m[1]
+        for m in re.findall(pattern, query)
+        if m[0] or m[1]
+    }
+    schemas.update(regex_schemas)
 
     return schemas
 
