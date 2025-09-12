@@ -208,6 +208,8 @@ async def execute_query(ctx: Context, query: str) -> str:
     except Exception as e:
         error_msg = f"Error executing query: {str(e)}"
         await ctx.error(error_msg)
+        if conn:
+            conn.rollback()
         return error_msg
     finally:
         if cursor:
@@ -281,6 +283,8 @@ async def stream_query(
     except Exception as e:
         error_msg = f"Error executing query: {str(e)}"
         await ctx.error(error_msg)
+        if conn:
+            conn.rollback()
         return error_msg
     finally:
         if cursor:
