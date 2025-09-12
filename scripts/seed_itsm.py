@@ -21,7 +21,8 @@ def _rand_id(prefix="INC", n=6):
     return f"{prefix}{''.join(random.choices(string.digits, k=n))}"
 
 def ensure_schema_and_tables(mgr: VerticaConnectionManager):
-    ddl = open("sql/itsm_schema.sql","r",encoding="utf-8").read()
+    with open("sql/itsm_schema.sql", "r", encoding="utf-8") as f:
+        ddl = f.read()
     conn = cur = None
     try:
         conn = mgr.get_connection()
