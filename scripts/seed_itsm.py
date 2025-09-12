@@ -29,6 +29,22 @@ def rows_to_buffer(write_rows):
     buf.seek(0)
     return buf
 
+
+def _log_copy_tables(cur, reject_table: str, exception_table: str, label: str) -> None:
+    def _log_and_drop(table: str, kind: str) -> None:
+        try:
+            cur.execute(f"SELECT * FROM {table}")
+            rows = cur.fetchall()
+            if rows:
+                logger.warning("%s %s: %s", label, kind, rows)
+        except Exception:
+            logger.exception("Failed to query %s", table)
+        finally:
+            cur.execute(f"DROP TABLE IF EXISTS {table}")
+
+    _log_and_drop(reject_table, "rejected rows")
+    _log_and_drop(exception_table, "exceptions")
+
 def _rand_id(prefix="INC", n=6):
     return f"{prefix}{''.join(random.choices(string.digits, k=n))}"
 
@@ -82,10 +98,15 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 write_row(row)
 
         buf = rows_to_buffer(write_cis)
+        ci_rejects = "tmp_ci_rejects"
+        ci_exceptions = "tmp_ci_exceptions"
+        cur.execute(f"DROP TABLE IF EXISTS {ci_rejects}")
+        cur.execute(f"DROP TABLE IF EXISTS {ci_exceptions}")
         cur.copy(
-            "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
+            f"COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N' REJECTED DATA AS TABLE {ci_rejects} EXCEPTIONS {ci_exceptions}",
             buf,
         )
+        _log_copy_tables(cur, ci_rejects, ci_exceptions, "cmdb.ci")
 
         def write_rels(write_row):
             for _ in range(400):
@@ -95,10 +116,15 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     write_row((p, random.choice(REL), c))
 
         buf = rows_to_buffer(write_rels)
+        rel_rejects = "tmp_rel_rejects"
+        rel_exceptions = "tmp_rel_exceptions"
+        cur.execute(f"DROP TABLE IF EXISTS {rel_rejects}")
+        cur.execute(f"DROP TABLE IF EXISTS {rel_exceptions}")
         cur.copy(
-            "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
+            f"COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N' REJECTED DATA AS TABLE {rel_rejects} EXCEPTIONS {rel_exceptions}",
             buf,
         )
+        _log_copy_tables(cur, rel_rejects, rel_exceptions, "cmdb.ci_rel")
 
         base = dt.datetime.now() - dt.timedelta(days=90)
         change_ids = set()
@@ -126,10 +152,15 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 )
 
         buf = rows_to_buffer(write_changes)
+        change_rejects = "tmp_change_rejects"
+        change_exceptions = "tmp_change_exceptions"
+        cur.execute(f"DROP TABLE IF EXISTS {change_rejects}")
+        cur.execute(f"DROP TABLE IF EXISTS {change_exceptions}")
         cur.copy(
-            "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
+            f"COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N' REJECTED DATA AS TABLE {change_rejects} EXCEPTIONS {change_exceptions}",
             buf,
         )
+        _log_copy_tables(cur, change_rejects, change_exceptions, "itsm.change")
 
         incident_ids = set()
 
@@ -173,10 +204,15 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 )
 
         buf = rows_to_buffer(write_incidents)
+        inc_rejects = "tmp_inc_rejects"
+        inc_exceptions = "tmp_inc_exceptions"
+        cur.execute(f"DROP TABLE IF EXISTS {inc_rejects}")
+        cur.execute(f"DROP TABLE IF EXISTS {inc_exceptions}")
         cur.copy(
-            "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
+            f"COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N' REJECTED DATA AS TABLE {inc_rejects} EXCEPTIONS {inc_exceptions}",
             buf,
         )
+        _log_copy_tables(cur, inc_rejects, inc_exceptions, "itsm.incident")
 
         conn.commit()
     except Exception:
