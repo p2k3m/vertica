@@ -132,25 +132,37 @@ class SimilarIncidents:
             conn = mgr.get_connection()
             cur = conn.cursor()
 
-            where_clauses = [f"opened_at >= NOW() - INTERVAL '{lookback_days} days'"]
             params: List[str] = []
+
+            query = (
+                "SELECT id, short_desc, description FROM itsm.incident "
+                "WHERE opened_at >= NOW() - INTERVAL %s "
+                "ORDER BY opened_at DESC LIMIT %s"
+            )
+            exec_params: List[str | int] = [f"{lookback_days} days", limit]
 
             if text:
                 tokens = re.findall(r"\w+", text)[:5]
                 if tokens:
-                    where_clauses.append(
-                        "(" + " OR ".join(["short_desc ILIKE %s"] * len(tokens)) + ")"
-                    )
                     params.extend([f"%{t}%" for t in tokens])
+                    query = (
+                        "SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt "
+                        "FROM (" + query + ") AS sub "
+                        "WHERE (" + " OR ".join(["short_desc ILIKE %s"] * len(tokens)) + ")"
+                    )
+                    exec_params = exec_params + params
+                else:
+                    query = (
+                        "SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt "
+                        "FROM (" + query + ") AS sub"
+                    )
+            else:
+                query = (
+                    "SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt "
+                    "FROM (" + query + ") AS sub"
+                )
 
-            query = f"""
-                SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt
-                FROM itsm.incident
-                WHERE {' AND '.join(where_clauses)}
-                ORDER BY opened_at DESC
-                LIMIT {limit}
-            """
-            cur.execute(query, params)
+            cur.execute(query, exec_params)
             rows = []
             while True:
                 batch = cur.fetchmany(1000)
