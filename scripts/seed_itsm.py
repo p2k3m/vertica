@@ -24,9 +24,13 @@ def ensure_schema_and_tables(mgr: VerticaConnectionManager):
     try:
         conn = mgr.get_connection()
         cur = conn.cursor()
-        for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
-            cur.execute(stmt + ";")
-        conn.commit()
+        try:
+            for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
+                cur.execute(stmt + ";")
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     finally:
         if cur: cur.close()
         if conn: mgr.release_connection(conn)
