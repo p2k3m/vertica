@@ -10,7 +10,7 @@ CATS = ["Database","Network","Application","Security","Storage","OS"]
 
 def to_csv_buffer(rows):
     buf = io.StringIO()
-    csv.writer(buf).writerows(rows)
+    csv.writer(buf, lineterminator="\n").writerows(rows)
     buf.seek(0)
     return buf
 
@@ -47,9 +47,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
             cid = _rand_id("CI", 6)
             cis.append((cid, f"ci-{i}", random.choice(CI_CLASSES), random.choice(ENV), "owner@example.com", random.choice(["LOW","MEDIUM","HIGH"])))
         try:
+            buf = to_csv_buffer(cis)
             cur.copy(
                 "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
-                to_csv_buffer(cis),
+                buf,
             )
         except Exception:
             conn.rollback()
@@ -62,9 +63,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 if p != c:
                     yield (p, random.choice(REL), c)
         try:
+            buf = to_csv_buffer(gen_rels())
             cur.copy(
                 "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
-                to_csv_buffer(gen_rels()),
+                buf,
             )
         except Exception:
             conn.rollback()
@@ -88,9 +90,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     random.choice(cis)[0],
                 )
         try:
+            buf = to_csv_buffer(gen_changes())
             cur.copy(
                 "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
-                to_csv_buffer(gen_changes()),
+                buf,
             )
         except Exception:
             conn.rollback()
@@ -113,9 +116,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 ])
                 yield (iid, opened, random.choice(PRIO), random.choice(CATS), random.choice(["DBA","NETOPS","APPENG","SECOPS"]), txt[:80], txt, random.choice(STATUS), closed, random.choice(cis)[0])
         try:
+            buf = to_csv_buffer(gen_incidents())
             cur.copy(
                 "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
-                to_csv_buffer(gen_incidents()),
+                buf,
             )
         except Exception:
             conn.rollback()
