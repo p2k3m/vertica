@@ -86,11 +86,6 @@ def main(
     # Configure logging based on verbosity
     setup_logger(verbose)
 
-    # Set default environment variables
-    os.environ.setdefault(VERTICA_CONNECTION_LIMIT, "10")
-    os.environ.setdefault(VERTICA_SSL, "false")
-    os.environ.setdefault(VERTICA_SSL_REJECT_UNAUTHORIZED, "true")
-
     # Load environment variables from file if specified, otherwise try default .env
     if env_file:
         logging.debug(f"Loading environment from file: {env_file}")
@@ -98,6 +93,11 @@ def main(
     else:
         logging.debug("Attempting to load environment from default .env file")
         load_dotenv()
+
+    # Set default environment variables
+    os.environ.setdefault(VERTICA_CONNECTION_LIMIT, "10")
+    os.environ.setdefault(VERTICA_SSL, "false")
+    os.environ.setdefault(VERTICA_SSL_REJECT_UNAUTHORIZED, "true")
 
     # Set environment variables from command line arguments if provided
     if host is not None:
@@ -110,7 +110,7 @@ def main(
         os.environ[VERTICA_USER] = user
     if password is not None:
         os.environ[VERTICA_PASSWORD] = password
-    if connection_limit:
+    if connection_limit is not None:
         os.environ[VERTICA_CONNECTION_LIMIT] = str(connection_limit)
     if ssl is not None:
         os.environ[VERTICA_SSL] = str(ssl).lower()
@@ -171,19 +171,18 @@ def main(
 @click.option(
     "--connection-limit",
     type=int,
-    default=10,
+    default=None,
+    show_default="10",
     help="Maximum number of connections in the pool",
 )
 @click.option(
-    "--ssl",
-    is_flag=True,
-    default=False,
+    "--ssl/--no-ssl",
+    default=None,
     help="Enable SSL for database connection",
 )
 @click.option(
-    "--ssl-reject-unauthorized",
-    is_flag=True,
-    default=True,
+    "--ssl-reject-unauthorized/--no-ssl-reject-unauthorized",
+    default=None,
     help="Reject unauthorized SSL certificates",
 )
 @click.pass_context
