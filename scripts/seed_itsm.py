@@ -62,9 +62,19 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         def gen_changes():
             for i in range(500):
                 chid = _rand_id("CHG", 6)
+                requested_at = base + dt.timedelta(days=random.randint(0, 60))
                 wstart = base + dt.timedelta(days=random.randint(0, 60))
                 wend = wstart + dt.timedelta(hours=random.choice([1,2,4]))
-                yield (chid, base, wstart, wend, random.choice(["LOW","MEDIUM","HIGH"]), random.choice(["SCHEDULED","IMPLEMENTED","FAILED"]), f"Change {i}", random.choice(cis)[0])
+                yield (
+                    chid,
+                    requested_at,
+                    wstart,
+                    wend,
+                    random.choice(["LOW","MEDIUM","HIGH"]),
+                    random.choice(["SCHEDULED","IMPLEMENTED","FAILED"]),
+                    f"Change {i}",
+                    random.choice(cis)[0],
+                )
         cur.copy(
             "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ','",
             to_csv_buffer(gen_changes()),
