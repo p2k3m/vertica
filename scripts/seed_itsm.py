@@ -3,8 +3,12 @@ from pathlib import Path
 
 import csv
 import io
+import logging
 import sqlparse
+import vertica_python
 from mcp_vertica.connection import VerticaConnectionManager, VerticaConfig
+
+logger = logging.getLogger(__name__)
 
 CI_CLASSES = ["APP", "DB", "VM", "NETWORK", "STORAGE"]
 ENV = ["PROD", "PREPROD", "QA", "DEV"]
@@ -177,7 +181,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         conn.commit()
     except Exception:
         if conn:
-            conn.rollback()
+            try:
+                conn.rollback()
+            except vertica_python.errors.ConnectionError:
+                logger.exception("Rollback failed")
         raise
     finally:
         if cur:
