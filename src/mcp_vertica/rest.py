@@ -98,7 +98,10 @@ def api_query(body: QueryIn):
 def api_nlp(body: NLPIn):
     mgr = connection_manager
     n2s = NL2SQL(ollama_host=body.ollama_host, model=body.model)
-    sql = n2s.generate_sql(mgr, body.question)
+    try:
+        sql = n2s.generate_sql(mgr, body.question)
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     if not body.execute:
         return {"sql": sql, "columns": [], "rows": []}
 
