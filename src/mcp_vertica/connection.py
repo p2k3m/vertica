@@ -242,12 +242,16 @@ class VerticaConnectionPool:
 
     def close_all(self):
         """Close all connections in the pool."""
-        while not self.pool.empty():
-            try:
-                conn = self.pool.get_nowait()
-                conn.close()
-            except Exception as e:
-                logger.error(f"Error closing connection: {e}")
+        with self.lock:
+            while not self.pool.empty():
+                try:
+                    conn = self.pool.get_nowait()
+                    conn.close()
+                except Exception as e:
+                    logger.error(f"Error closing connection: {e}")
+
+            self.checked_out_connections.clear()
+            self.active_connections = 0
 
 class VerticaConnectionManager:
     def __init__(self):
