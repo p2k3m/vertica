@@ -198,10 +198,11 @@ class SimilarIncidents:
                     break
                 ids = [r[0] for r in batch]
                 txts = [r[1] for r in batch]
-                if not txts:
+                if len(txts) < 2:
                     continue
                 vec = TfidfVectorizer(
-                    min_df=min(2, len(txts) + 1), max_features=5000
+                    min_df=1 if len(txts) < 2 else 2,
+                    max_features=5000,
                 )
                 X = vec.fit_transform(txts + [seed_txt])
                 sims = cosine_similarity(X[-1], X[:-1]).ravel()
@@ -213,10 +214,10 @@ class SimilarIncidents:
                     if len(top) > self.top_k:
                         heapq.heappop(top)
 
-            if incident_id and not found_seed:
-                raise ValueError(f"Incident {incident_id} not found")
             if not top:
                 return []
+            if incident_id and not found_seed:
+                raise ValueError(f"Incident {incident_id} not found")
 
             top.sort(reverse=True)
             results = [
