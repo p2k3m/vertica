@@ -116,8 +116,12 @@ class SimilarIncidents:
             if not results:
                 return []
             # Fetch fix notes/status for output
-            ids = ",".join("'" + r["id"] + "'" for r in results)
-            cur.execute(f"SELECT id, status, closed_at, assignment_group, short_desc FROM itsm.incident WHERE id IN ({ids})")
+            placeholders = ",".join(["%s"] * len(results))
+            cur.execute(
+                f"SELECT id, status, closed_at, assignment_group, short_desc "
+                f"FROM itsm.incident WHERE id IN ({placeholders})",
+                [r["id"] for r in results],
+            )
             recs = cur.fetchall()
             by_id = {r[0]: {"id": r[0], "status": r[1], "closed_at": r[2], "assignment_group": r[3], "short_desc": r[4]} for r in recs}
             for r in results:
