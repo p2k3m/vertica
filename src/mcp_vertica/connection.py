@@ -208,14 +208,30 @@ class VerticaConnectionPool:
             # The connection is being returned, remove it from the tracked set
             self.checked_out_connections.remove(conn)
 
-            try:
-                self.pool.put(conn)
-            except Exception as e:
-                logger.error(f"Failed to release connection to pool: {str(e)}")
+            if conn.closed():
+                logger.warning(
+                    "Released Vertica connection is closed; attempting to replace it"
+                )
                 try:
-                    conn.close()
-                except Exception as close_error:
-                    logger.error(f"Failed to close connection: {close_error}")
+                    new_conn = vertica_python.connect(**self._get_connection_config())
+                    self.pool.put(new_conn)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to create replacement Vertica connection: %s", e
+                    )
+            else:
+                try:
+                    self.pool.put(conn)
+                except Exception as e:
+                    logger.error(
+                        f"Failed to release connection to pool: {str(e)}"
+                    )
+                    try:
+                        conn.close()
+                    except Exception as close_error:
+                        logger.error(
+                            f"Failed to close connection: {close_error}"
+                        )
 
             if self.active_connections > 0:
                 self.active_connections -= 1
