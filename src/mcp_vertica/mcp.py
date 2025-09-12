@@ -213,7 +213,12 @@ async def execute_query(ctx: Context, query: str) -> str:
                 rows, cols = [], []
                 conn.commit()
         await ctx.info(f"Query executed successfully, returned {len(rows)} rows")
-        return json.dumps({"columns": cols, "rows": [list(r) for r in rows]})
+        serialized_rows = [
+            [str(cell) if cell is not None else None for cell in row]
+            for row in rows
+        ]
+        serialized_cols = [str(c) for c in cols]
+        return json.dumps({"columns": serialized_cols, "rows": serialized_rows})
     except Exception as e:
         error_msg = f"Error executing query: {str(e)}"
         await ctx.error(error_msg)
@@ -290,7 +295,8 @@ async def stream_query(
         total_rows = 0
 
         cols = [d[0] for d in cursor.description]
-        await ctx.send(json.dumps({"columns": cols}))
+        serialized_cols = [str(c) for c in cols]
+        await ctx.send(json.dumps({"columns": serialized_cols}))
 
         while True:
             batch = cursor.fetchmany(batch_size)
@@ -298,7 +304,11 @@ async def stream_query(
                 break
             total_rows += len(batch)
             await ctx.debug(f"Fetched {total_rows} rows")
-            await ctx.send(json.dumps([list(r) for r in batch]))
+            serialized_batch = [
+                [str(cell) if cell is not None else None for cell in row]
+                for row in batch
+            ]
+            await ctx.send(json.dumps(serialized_batch))
 
         await ctx.info(f"Query completed, total rows: {total_rows}")
         return json.dumps({"rows_streamed": total_rows})
