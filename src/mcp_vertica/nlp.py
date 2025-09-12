@@ -97,8 +97,11 @@ Return only SQL."""
           "stream": False,
           "options": {"temperature": 0.1}
         }
-        r = requests.post(f"{self.ollama_host}/api/generate", json=payload, timeout=120)
-        r.raise_for_status()
+        try:
+            r = requests.post(f"{self.ollama_host}/api/generate", json=payload, timeout=120)
+            r.raise_for_status()
+        except requests.RequestException as e:
+            raise RuntimeError(f"Failed to generate SQL: {e}") from e
         text = r.json().get("response","").strip()
         # Extract the first semicolon-terminated SQL if model babbles
         m = re.search(r"(?is)(.*?;)", text)
