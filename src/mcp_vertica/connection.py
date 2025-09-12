@@ -1,6 +1,6 @@
 import os
 import logging
-from queue import Queue
+from queue import Queue, Empty
 import threading
 import vertica_python
 from typing import Dict, Any, Optional, Set
@@ -118,6 +118,9 @@ class VerticaConnectionPool:
         # Track connections currently checked out of the pool to prevent
         # double releases or releasing connections that were never acquired
         self.checked_out_connections: Set[vertica_python.Connection] = set()
+        # Track pool rebuild attempts to avoid infinite loops
+        self.rebuild_attempts = 0
+        self.max_rebuild_attempts = 3
         try:
             self._initialize_pool()
         except Exception as e:
@@ -210,6 +213,42 @@ class VerticaConnectionPool:
                 # Reset active connection count
                 self.active_connections = 0
                 raise
+        # Reset rebuild attempts after successful initialization
+        self.rebuild_attempts = 0
+
+    def _log_pool_diagnostics(self) -> None:
+        """Log diagnostic information about the pool state."""
+        logger.error(
+            "Pool diagnostics: active_connections=%d, queue_size=%d, checked_out=%d",
+            self.active_connections,
+            self.pool.qsize(),
+            len(self.checked_out_connections),
+        )
+
+    def _handle_rebuild(self) -> None:
+        """Attempt to rebuild the pool with a limited number of retries."""
+        if self.rebuild_attempts >= self.max_rebuild_attempts:
+            logger.error(
+                "Maximum pool rebuild attempts (%d) reached; skipping rebuild",
+                self.max_rebuild_attempts,
+            )
+            return
+
+        self.rebuild_attempts += 1
+        logger.info(
+            "Attempting to rebuild connection pool (attempt %d/%d)",
+            self.rebuild_attempts,
+            self.max_rebuild_attempts,
+        )
+        try:
+            self._initialize_pool()
+        except Exception as rebuild_error:
+            logger.error(
+                "Pool rebuild attempt %d failed: %s",
+                self.rebuild_attempts,
+                rebuild_error,
+                exc_info=True,
+            )
 
     def get_connection(self) -> vertica_python.Connection:
         """Get a connection from the pool."""
@@ -219,27 +258,39 @@ class VerticaConnectionPool:
 
             try:
                 conn = self.pool.get(timeout=5)  # 5 second timeout
-
-                if conn.closed():
-                    logger.warning(
-                        "Retrieved Vertica connection is closed; attempting to replace it"
-                    )
-                    try:
-                        conn.close()
-                    except Exception:
-                        pass
-                    conn = vertica_python.connect(**self._get_connection_config())
-
-                self.active_connections += 1
-                # Track the connection as checked out so we can verify it on release
-                self.checked_out_connections.add(conn)
-                return conn
+            except Empty:
+                logger.warning("Timed out waiting for connection from pool")
+                raise Exception("Timeout waiting for connection from pool")
             except Exception as e:
                 logger.error(
-                    "Failed to get connection from pool: %s. Rebuilding pool.", e
+                    "Failed to retrieve connection from queue: %s", e, exc_info=True
                 )
-                self._initialize_pool()
+                self._log_pool_diagnostics()
+                self._handle_rebuild()
                 raise
+
+            if conn.closed():
+                logger.warning(
+                    "Retrieved Vertica connection is closed; attempting to replace it"
+                )
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                try:
+                    conn = vertica_python.connect(**self._get_connection_config())
+                except Exception as e:
+                    logger.error(
+                        "Failed to create replacement connection: %s", e, exc_info=True
+                    )
+                    self._log_pool_diagnostics()
+                    self._handle_rebuild()
+                    raise
+
+            self.active_connections += 1
+            # Track the connection as checked out so we can verify it on release
+            self.checked_out_connections.add(conn)
+            return conn
 
     def release_connection(self, conn: vertica_python.Connection):
         """Release a connection back to the pool."""
