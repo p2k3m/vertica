@@ -34,6 +34,7 @@ def ensure_schema_and_tables(mgr: VerticaConnectionManager):
     conn = cur = None
     try:
         conn = mgr.get_connection()
+        conn.autocommit = False
         cur = conn.cursor()
         try:
             for stmt in [s.strip() for s in sqlparse.split(ddl) if s.strip()]:
@@ -53,6 +54,7 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
     conn = cur = None
     try:
         conn = mgr.get_connection()
+        conn.autocommit = False
         cur = conn.cursor()
         cis: list[tuple] = []
         ci_ids = set()
