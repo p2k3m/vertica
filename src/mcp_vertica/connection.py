@@ -278,6 +278,16 @@ class VerticaConnectionPool:
                 except Exception as e:
                     logger.error(f"Error closing connection: {e}")
 
+            # Close any connections that are currently checked out
+            for conn in list(self.checked_out_connections):
+                try:
+                    conn.close()
+                except Exception as e:
+                    logger.error(
+                        f"Error closing checked-out connection: {e}"
+                    )
+
+            # Clear tracking and reset counters
             self.checked_out_connections.clear()
             self.active_connections = 0
 
