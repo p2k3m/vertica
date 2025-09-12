@@ -5,6 +5,7 @@ import logging
 import re
 import json
 import sqlparse
+from sqlparse import tokens as T
 from sqlparse.sql import Identifier, IdentifierList
 from .connection import VerticaConnectionManager, VerticaConfig, OperationType
 from starlette.applications import Starlette
@@ -17,16 +18,47 @@ import io
 logger = logging.getLogger("mcp-vertica")
 
 def extract_operation_type(query: str) -> OperationType | None:
-    """Extract the operation type from a SQL query."""
-    query = query.strip().upper()
+    """Extract the operation type from a SQL query.
 
-    if query.startswith("INSERT"):
+    The query is parsed with :mod:`sqlparse` and the first meaningful token is
+    inspected. Leading comments and ``WITH``/CTE blocks are skipped before
+    determining the command keyword.
+    """
+
+    statements = sqlparse.parse(query)
+    if not statements:
+        return None
+
+    statement = statements[0]
+    idx = -1
+    token = None
+
+    while True:
+        idx, token = statement.token_next(idx, skip_ws=True, skip_cm=True)
+        if token is None:
+            return None
+
+        # Skip initial WITH/CTE block
+        if token.ttype is T.Keyword.CTE and token.normalized == "WITH":
+            while True:
+                idx, token = statement.token_next(idx, skip_ws=True, skip_cm=True)
+                if token is None:
+                    return None
+                if token.ttype in T.Keyword:
+                    break
+            break
+
+        break
+
+    keyword = token.normalized if token.ttype in T.Keyword else token.value.upper()
+
+    if keyword == "INSERT":
         return OperationType.INSERT
-    elif query.startswith("UPDATE"):
+    if keyword == "UPDATE":
         return OperationType.UPDATE
-    elif query.startswith("DELETE"):
+    if keyword == "DELETE":
         return OperationType.DELETE
-    elif any(query.startswith(op) for op in ["CREATE", "ALTER", "DROP", "TRUNCATE"]):
+    if keyword in {"CREATE", "ALTER", "DROP", "TRUNCATE"}:
         return OperationType.DDL
     return None
 
