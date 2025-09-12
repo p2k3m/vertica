@@ -95,7 +95,7 @@ def main(
         load_dotenv()
 
     # Set default environment variables
-    os.environ.setdefault(VERTICA_CONNECTION_LIMIT, "10")
+    os.environ.setdefault(VERTICA_CONNECTION_LIMIT, "1")
     os.environ.setdefault(VERTICA_SSL, "false")
     os.environ.setdefault(VERTICA_SSL_REJECT_UNAUTHORIZED, "true")
 

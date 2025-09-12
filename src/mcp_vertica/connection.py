@@ -42,7 +42,7 @@ class VerticaConfig:
     database: str
     user: str
     password: str
-    connection_limit: int = 10
+    connection_limit: int = 1
     ssl: bool = False
     ssl_reject_unauthorized: bool = True
     # Global operation permissions
@@ -60,7 +60,11 @@ class VerticaConfig:
 
     @classmethod
     def from_env(cls) -> 'VerticaConfig':
-        """Create config from environment variables."""
+        """Create config from environment variables.
+
+        Defaults to a single connection; override with the
+        ``VERTICA_CONNECTION_LIMIT`` environment variable.
+        """
         # Parse schema permissions
         schema_permissions = {}
         for schema_perm in [
@@ -104,7 +108,7 @@ class VerticaConfig:
             database=os.getenv("VERTICA_DATABASE", "VMart"),
             user=os.getenv("VERTICA_USER", "dbadmin"),
             password=os.getenv("VERTICA_PASSWORD", ""),
-            connection_limit=int(os.getenv("VERTICA_CONNECTION_LIMIT", "10")),
+            connection_limit=int(os.getenv("VERTICA_CONNECTION_LIMIT", "1")),
             ssl=os.getenv("VERTICA_SSL", "false").lower() == "true",
             ssl_reject_unauthorized=os.getenv("VERTICA_SSL_REJECT_UNAUTHORIZED", "true").lower() == "true",
             allow_select=os.getenv("ALLOW_SELECT_OPERATION", "true").lower() == "true",
