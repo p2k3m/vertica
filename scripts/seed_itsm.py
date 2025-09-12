@@ -191,7 +191,7 @@ def main():
     ensure_schema_and_tables(mgr)
     synthesize_and_load(mgr, 2000)
     print("Seed complete.")
-    mgr.close_all()
+    mgr.close_all()  # release pooled connections
 
 if __name__ == "__main__":
     main()
