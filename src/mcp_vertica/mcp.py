@@ -58,6 +58,8 @@ def extract_operation_type(query: str) -> OperationType | None:
         return OperationType.UPDATE
     if keyword == "DELETE":
         return OperationType.DELETE
+    if keyword == "SELECT":
+        return OperationType.SELECT
     if keyword in {"CREATE", "ALTER", "DROP", "TRUNCATE"}:
         return OperationType.DDL
     return None
@@ -406,6 +408,11 @@ async def get_table_structure(
         await ctx.error("No database connection manager available")
         return "Error: No database connection manager available"
 
+    if not manager.is_operation_allowed(schema.lower(), OperationType.SELECT):
+        error_msg = f"SELECT operation not allowed for schema {schema}"
+        await ctx.error(error_msg)
+        return error_msg
+
     query = """
     SELECT
         column_name,
@@ -499,6 +506,11 @@ async def list_indexes(
         await ctx.error("No database connection manager available")
         return "Error: No database connection manager available"
 
+    if not manager.is_operation_allowed(schema.lower(), OperationType.SELECT):
+        error_msg = f"SELECT operation not allowed for schema {schema}"
+        await ctx.error(error_msg)
+        return error_msg
+
     query = """
     SELECT
         projection_name,
@@ -559,6 +571,11 @@ async def list_views(
     if not manager:
         await ctx.error("No database connection manager available")
         return "Error: No database connection manager available"
+
+    if not manager.is_operation_allowed(schema.lower(), OperationType.SELECT):
+        error_msg = f"SELECT operation not allowed for schema {schema}"
+        await ctx.error(error_msg)
+        return error_msg
 
     query = """
     SELECT
