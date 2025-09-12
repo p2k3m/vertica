@@ -116,17 +116,48 @@ class SimilarIncidents:
     def __init__(self, top_k: int = 5):
         self.top_k = top_k
 
-    def query(self, mgr: VerticaConnectionManager, text: Optional[str] = None, incident_id: Optional[str] = None):
+    def query(
+        self,
+        mgr: VerticaConnectionManager,
+        text: Optional[str] = None,
+        incident_id: Optional[str] = None,
+        lookback_days: int = 90,
+        limit: int = 10000,
+    ):
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.metrics.pairwise import cosine_similarity
+
         conn = cur = None
         try:
             conn = mgr.get_connection()
             cur = conn.cursor()
-            cur.execute(
-                "SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt FROM itsm.incident"
-            )
-            rows = cur.fetchall()
+
+            where_clauses = [f"opened_at >= NOW() - INTERVAL '{lookback_days} days'"]
+            params: List[str] = []
+
+            if text:
+                tokens = re.findall(r"\w+", text)[:5]
+                if tokens:
+                    where_clauses.append(
+                        "(" + " OR ".join(["short_desc ILIKE %s"] * len(tokens)) + ")"
+                    )
+                    params.extend([f"%{t}%" for t in tokens])
+
+            query = f"""
+                SELECT id, COALESCE(short_desc,'') || ' ' || COALESCE(description,'') AS txt
+                FROM itsm.incident
+                WHERE {' AND '.join(where_clauses)}
+                ORDER BY opened_at DESC
+                LIMIT {limit}
+            """
+            cur.execute(query, params)
+            rows = []
+            while True:
+                batch = cur.fetchmany(1000)
+                if not batch:
+                    break
+                rows.extend(batch)
+
             corpus_ids = [r[0] for r in rows]
             corpus_txt = [r[1] for r in rows]
             if len(corpus_txt) < 2:
@@ -139,6 +170,7 @@ class SimilarIncidents:
                 if not text:
                     raise ValueError("Provide text or incident_id")
                 seed_txt = text
+
             vec = TfidfVectorizer(min_df=min(2, len(corpus_txt)), max_features=5000)
             X = vec.fit_transform(corpus_txt)
             xq = vec.transform([seed_txt])
@@ -151,8 +183,10 @@ class SimilarIncidents:
                 results.append({"id": corpus_ids[i], "similarity": float(sims[i])})
                 if len(results) == self.top_k:
                     break
+
             if not results:
                 return []
+
             # Fetch fix notes/status for output
             placeholders = ",".join(["%s"] * len(results))
             cur.execute(
@@ -175,5 +209,7 @@ class SimilarIncidents:
                 r.update(by_id.get(r["id"], {}))
             return results
         finally:
-            if cur: cur.close()
-            if conn: mgr.release_connection(conn)
+            if cur:
+                cur.close()
+            if conn:
+                mgr.release_connection(conn)
