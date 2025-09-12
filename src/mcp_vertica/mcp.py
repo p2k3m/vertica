@@ -357,7 +357,7 @@ async def copy_data(
 
         # Convert data to CSV string
         output = io.StringIO()
-        writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
+        writer = csv.writer(output, lineterminator="\n", quoting=csv.QUOTE_MINIMAL)
         writer.writerows([["\\N" if v is None else v for v in row] for row in data])
         output.seek(0)
 
