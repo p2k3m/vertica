@@ -338,11 +338,11 @@ async def copy_data(
         # Convert data to CSV string
         output = io.StringIO()
         writer = csv.writer(output, quoting=csv.QUOTE_MINIMAL)
-        writer.writerows(data)
+        writer.writerows([["\\N" if v is None else v for v in row] for row in data])
         output.seek(0)
 
         # Create COPY command including schema and stream data from buffer
-        copy_query = f"COPY {schema}.{table} FROM STDIN DELIMITER ',' ENCLOSED BY '\"'"
+        copy_query = f"COPY {schema}.{table} FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'"
         output.seek(0)
         cursor.copy(copy_query, output)
         conn.commit()
