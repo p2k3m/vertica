@@ -110,6 +110,9 @@ class VerticaConnectionPool:
         self.pool: Queue = Queue(maxsize=config.connection_limit)
         self.active_connections = 0
         self.lock = threading.Lock()
+        # Track connections currently checked out of the pool to prevent
+        # double releases or releasing connections that were never acquired
+        self.checked_out_connections: Set[vertica_python.Connection] = set()
         try:
             self._initialize_pool()
         except Exception as e:
@@ -181,6 +184,8 @@ class VerticaConnectionPool:
             try:
                 conn = self.pool.get(timeout=5)  # 5 second timeout
                 self.active_connections += 1
+                # Track the connection as checked out so we can verify it on release
+                self.checked_out_connections.add(conn)
                 return conn
             except Exception as e:
                 logger.error(
@@ -192,15 +197,32 @@ class VerticaConnectionPool:
     def release_connection(self, conn: vertica_python.Connection):
         """Release a connection back to the pool."""
         with self.lock:
+            if conn not in self.checked_out_connections:
+                # If the connection wasn't checked out, avoid adding it back to
+                # the pool and warn to help catch potential double releases.
+                logger.warning(
+                    "Attempted to release connection not checked out from pool"
+                )
+                return
+
+            # The connection is being returned, remove it from the tracked set
+            self.checked_out_connections.remove(conn)
+
             try:
                 self.pool.put(conn)
-                self.active_connections -= 1
             except Exception as e:
                 logger.error(f"Failed to release connection to pool: {str(e)}")
                 try:
                     conn.close()
                 except Exception as close_error:
                     logger.error(f"Failed to close connection: {close_error}")
+
+            if self.active_connections > 0:
+                self.active_connections -= 1
+            else:
+                logger.warning(
+                    "Active connection count is already zero; cannot decrement"
+                )
 
     def close_all(self):
         """Close all connections in the pool."""
