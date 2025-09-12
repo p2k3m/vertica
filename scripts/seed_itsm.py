@@ -43,8 +43,12 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         cur = conn.cursor()
         # CIS
         cis = []
+        ci_ids = set()
         for i in range(200):
             cid = _rand_id("CI", 6)
+            while cid in ci_ids:
+                cid = _rand_id("CI", 6)
+            ci_ids.add(cid)
             cis.append((cid, f"ci-{i}", random.choice(CI_CLASSES), random.choice(ENV), "owner@example.com", random.choice(["LOW","MEDIUM","HIGH"])))
         try:
             buf = to_csv_buffer(cis)
@@ -73,9 +77,13 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
             raise
         # Changes
         base = dt.datetime.now() - dt.timedelta(days=90)
+        change_ids = set()
         def gen_changes():
             for i in range(500):
                 chid = _rand_id("CHG", 6)
+                while chid in change_ids:
+                    chid = _rand_id("CHG", 6)
+                change_ids.add(chid)
                 requested_at = base + dt.timedelta(days=random.randint(0, 60))
                 wstart = base + dt.timedelta(days=random.randint(0, 60))
                 wend = wstart + dt.timedelta(hours=random.choice([1,2,4]))
@@ -99,9 +107,13 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
             conn.rollback()
             raise
         # Incidents
+        incident_ids = set()
         def gen_incidents():
             for i in range(n_incidents):
                 iid = _rand_id("INC", 6)
+                while iid in incident_ids:
+                    iid = _rand_id("INC", 6)
+                incident_ids.add(iid)
                 opened = base + dt.timedelta(days=random.randint(0, 60))
                 closed = opened + dt.timedelta(hours=random.randint(1,72)) if random.random() > 0.3 else None
                 txt = random.choice([
@@ -114,7 +126,18 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     "SSL cert mismatch on gateway",
                     "Pods evicted due to memory pressure"
                 ])
-                yield (iid, opened, random.choice(PRIO), random.choice(CATS), random.choice(["DBA","NETOPS","APPENG","SECOPS"]), txt[:80], txt, random.choice(STATUS), closed, random.choice(cis)[0])
+                yield (
+                    iid,
+                    opened,
+                    random.choice(PRIO),
+                    random.choice(CATS),
+                    random.choice(["DBA","NETOPS","APPENG","SECOPS"]),
+                    txt[:80],
+                    txt,
+                    random.choice(STATUS),
+                    closed,
+                    random.choice(cis)[0],
+                )
         try:
             buf = to_csv_buffer(gen_incidents())
             cur.copy(
