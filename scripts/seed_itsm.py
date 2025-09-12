@@ -1,4 +1,4 @@
-import random, string, datetime as dt, csv, io
+import random, string, datetime as dt
 from pathlib import Path
 
 import sqlparse
@@ -11,13 +11,9 @@ STATUS = ["OPEN","ASSIGNED","IN_PROGRESS","RESOLVED","CLOSED"]
 REL = ["DEPENDS_ON","RUNS_ON","HOSTED_ON"]
 CATS = ["Database","Network","Application","Security","Storage","OS"]
 
-def to_csv_buffer(rows):
-    buf = io.StringIO()
-    writer = csv.writer(buf, lineterminator="\n")
+def to_csv_lines(rows):
     for row in rows:
-        writer.writerow(["\\N" if v is None else v for v in row])
-    buf.seek(0)
-    return buf
+        yield ",".join("" if v is None else str(v) for v in row) + "\n"
 
 def _rand_id(prefix="INC", n=6):
     return f"{prefix}{''.join(random.choices(string.digits, k=n))}"
@@ -57,10 +53,9 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
             ci_ids.add(cid)
             cis.append((cid, f"ci-{i}", random.choice(CI_CLASSES), random.choice(ENV), "owner@example.com", random.choice(["LOW","MEDIUM","HIGH"])))
         try:
-            buf = to_csv_buffer(cis)
             cur.copy(
-                "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
-                buf,
+                "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' NULL ''",
+                to_csv_lines(cis),
             )
         except Exception:
             conn.rollback()
@@ -73,10 +68,9 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 if p != c:
                     yield (p, random.choice(REL), c)
         try:
-            buf = to_csv_buffer(gen_rels())
             cur.copy(
-                "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
-                buf,
+                "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' NULL ''",
+                to_csv_lines(gen_rels()),
             )
         except Exception:
             conn.rollback()
@@ -104,10 +98,9 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     random.choice(cis)[0],
                 )
         try:
-            buf = to_csv_buffer(gen_changes())
             cur.copy(
-                "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
-                buf,
+                "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' NULL ''",
+                to_csv_lines(gen_changes()),
             )
         except Exception:
             conn.rollback()
@@ -145,10 +138,9 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     random.choice(cis)[0],
                 )
         try:
-            buf = to_csv_buffer(gen_incidents())
             cur.copy(
-                "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\\N'",
-                buf,
+                "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' NULL ''",
+                to_csv_lines(gen_incidents()),
             )
         except Exception:
             conn.rollback()
