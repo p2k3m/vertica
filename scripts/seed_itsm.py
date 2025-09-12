@@ -188,10 +188,12 @@ def main():
     cfg = VerticaConfig.from_env()
     mgr = VerticaConnectionManager()
     mgr.initialize_default(cfg)
-    ensure_schema_and_tables(mgr)
-    synthesize_and_load(mgr, 2000)
-    print("Seed complete.")
-    mgr.close_all()  # release pooled connections
+    try:
+        ensure_schema_and_tables(mgr)
+        synthesize_and_load(mgr, 2000)
+        print("Seed complete.")
+    finally:
+        mgr.close_all()  # release pooled connections
 
 if __name__ == "__main__":
     main()
