@@ -1,6 +1,7 @@
 import os
 import requests
 import re
+import heapq
 from dataclasses import dataclass
 from typing import List, Optional
 from .connection import VerticaConnectionManager
@@ -124,6 +125,13 @@ class SimilarIncidents:
         lookback_days: int = 90,
         limit: int = 10000,
     ):
+        """Return incidents similar to the given text or incident.
+
+        The incident corpus is streamed from Vertica in 1000-row chunks. Each
+        chunk is vectorized with TF–IDF and compared against the seed text, so
+        only the top ``top_k`` matches are kept in memory. This avoids loading
+        the entire result set at once.
+        """
         from sklearn.feature_extraction.text import TfidfVectorizer
         from sklearn.metrics.pairwise import cosine_similarity
 
@@ -133,6 +141,22 @@ class SimilarIncidents:
             cur = conn.cursor()
 
             params: List[str] = []
+
+            # Determine the seed text
+            if incident_id:
+                cur.execute(
+                    "SELECT COALESCE(short_desc,'') || ' ' || COALESCE(description,'') "
+                    "FROM itsm.incident WHERE id = %s",
+                    [incident_id],
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise ValueError(f"Incident {incident_id} not found")
+                seed_txt = row[0]
+            elif text:
+                seed_txt = text
+            else:
+                raise ValueError("Provide text or incident_id")
 
             query = (
                 "SELECT id, short_desc, description FROM itsm.incident "
@@ -163,41 +187,38 @@ class SimilarIncidents:
                 )
 
             cur.execute(query, exec_params)
-            rows = []
+            top: List[tuple[float, str]] = []
+            found_seed = False
             while True:
                 batch = cur.fetchmany(1000)
                 if not batch:
                     break
-                rows.extend(batch)
-
-            corpus_ids = [r[0] for r in rows]
-            corpus_txt = [r[1] for r in rows]
-            if len(corpus_txt) < 2:
-                return []
-            if incident_id:
-                if incident_id not in corpus_ids:
-                    raise ValueError(f"Incident {incident_id} not found")
-                seed_txt = corpus_txt[corpus_ids.index(incident_id)]
-            else:
-                if not text:
-                    raise ValueError("Provide text or incident_id")
-                seed_txt = text
-
-            vec = TfidfVectorizer(min_df=min(2, len(corpus_txt)), max_features=5000)
-            X = vec.fit_transform(corpus_txt)
-            xq = vec.transform([seed_txt])
-            sims = cosine_similarity(xq, X).ravel()
-            top_idx = sims.argsort()[::-1][: self.top_k + 1]
-            results = []
-            for i in top_idx:
-                if incident_id and corpus_ids[i] == incident_id:
+                ids = [r[0] for r in batch]
+                txts = [r[1] for r in batch]
+                if not txts:
                     continue
-                results.append({"id": corpus_ids[i], "similarity": float(sims[i])})
-                if len(results) == self.top_k:
-                    break
+                vec = TfidfVectorizer(
+                    min_df=min(2, len(txts) + 1), max_features=5000
+                )
+                X = vec.fit_transform(txts + [seed_txt])
+                sims = cosine_similarity(X[-1], X[:-1]).ravel()
+                for i, sim in enumerate(sims):
+                    if incident_id and ids[i] == incident_id:
+                        found_seed = True
+                        continue
+                    heapq.heappush(top, (sim, ids[i]))
+                    if len(top) > self.top_k:
+                        heapq.heappop(top)
 
-            if not results:
+            if incident_id and not found_seed:
+                raise ValueError(f"Incident {incident_id} not found")
+            if not top:
                 return []
+
+            top.sort(reverse=True)
+            results = [
+                {"id": id_, "similarity": float(sim)} for sim, id_ in top
+            ]
 
             # Fetch fix notes/status for output
             placeholders = ",".join(["%s"] * len(results))
