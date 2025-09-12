@@ -65,6 +65,31 @@ $env:VERTICA_PASSWORD=""
 $env:VERTICA_CONNECTION_LIMIT="10"
 ```
 
+### Operation permissions
+
+Global defaults for SQL operations can be controlled with environment variables:
+
+```bash
+export ALLOW_SELECT_OPERATION=true
+export ALLOW_INSERT_OPERATION=false
+export ALLOW_UPDATE_OPERATION=false
+export ALLOW_DELETE_OPERATION=false
+export ALLOW_DDL_OPERATION=false
+```
+
+You can override these on a per-schema basis using comma-separated
+`schema:true|false` pairs:
+
+```bash
+export SCHEMA_SELECT_PERMISSIONS="public:true,itsm:false"
+# SCHEMA_INSERT_PERMISSIONS, SCHEMA_UPDATE_PERMISSIONS,
+# SCHEMA_DELETE_PERMISSIONS and SCHEMA_DDL_PERMISSIONS work the same way
+```
+
+If no schema permissions are configured, the server logs a notice and all
+operations (SELECT, INSERT, UPDATE, DELETE and DDL) fall back to the global
+settings.
+
 ## 3) Seed ITSM/CMDB sample data
 ```bash
 python scripts/seed_itsm.py
