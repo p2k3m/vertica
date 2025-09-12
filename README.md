@@ -36,6 +36,8 @@ User: dbadmin
 
 Password: (empty)
 
+Connection limit: 1 (override with `VERTICA_CONNECTION_LIMIT`)
+
 ## 2) Install & configure mcp-vertica
 ```bash
 # Mac/Linux (uv)
@@ -53,7 +55,8 @@ export VERTICA_PORT=5433
 export VERTICA_DATABASE=VMart
 export VERTICA_USER=dbadmin
 export VERTICA_PASSWORD=""
-export VERTICA_CONNECTION_LIMIT=10
+# Optional: override connection limit (default 1)
+export VERTICA_CONNECTION_LIMIT=5
 ```
 
 Windows (PowerShell):
@@ -64,7 +67,7 @@ $env:VERTICA_PORT="5433"
 $env:VERTICA_DATABASE="VMart"
 $env:VERTICA_USER="dbadmin"
 $env:VERTICA_PASSWORD=""
-$env:VERTICA_CONNECTION_LIMIT="10"
+$env:VERTICA_CONNECTION_LIMIT="5" # optional override (default 1)
 ```
 
 ### Operation permissions
