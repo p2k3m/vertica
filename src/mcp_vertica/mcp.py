@@ -224,13 +224,16 @@ async def stream_query(
         conn = manager.get_connection()  # Always use default DB connection
         cursor = conn.cursor()
         cursor.execute(query)
+        if not cursor.description:
+            conn.commit()
+            await ctx.info("Query executed successfully with no results")
+            return json.dumps({"rows_streamed": 0})
 
         total_rows = 0
 
-        # Send column information first, if available
-        if cursor.description:
-            cols = [d[0] for d in cursor.description]
-            await ctx.send(json.dumps({"columns": cols}))
+        # Send column information first
+        cols = [d[0] for d in cursor.description]
+        await ctx.send(json.dumps({"columns": cols}))
 
         while True:
             batch = cursor.fetchmany(batch_size)
