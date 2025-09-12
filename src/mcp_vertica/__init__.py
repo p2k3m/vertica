@@ -205,7 +205,8 @@ def nlp():
 @click.option("--ollama-host", default="http://127.0.0.1:11434")
 def nlp_ask(question, execute, model, ollama_host):
     q = " ".join(question)
-    mgr = VerticaConnectionManager(VerticaConfig.from_env())
+    mgr = VerticaConnectionManager()
+    mgr.initialize_default(VerticaConfig.from_env())
     n2s = NL2SQL(ollama_host=ollama_host, model=model)
     sql = n2s.generate_sql(mgr, q)
     click.echo(f"SQL:\n{sql}")
@@ -231,7 +232,8 @@ def nlp_ask(question, execute, model, ollama_host):
 @click.option("--text", default=None)
 @click.option("--top-k", default=5, type=int)
 def nlp_similar(incident_id, text, top_k):
-    mgr = VerticaConnectionManager(VerticaConfig.from_env())
+    mgr = VerticaConnectionManager()
+    mgr.initialize_default(VerticaConfig.from_env())
     sim = SimilarIncidents(top_k=top_k)
     res = sim.query(mgr, text=text, incident_id=incident_id)
     for r in res:
