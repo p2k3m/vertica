@@ -70,7 +70,7 @@ def ensure_schema_and_tables(mgr: VerticaConnectionManager):
             missing = []
             for schema, table in expected_tables:
                 cur.execute(
-                    "SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s",
+                    "SELECT 1 FROM v_catalog.tables WHERE table_schema = %s AND table_name = %s",
                     (schema, table),
                 )
                 if cur.fetchone():
