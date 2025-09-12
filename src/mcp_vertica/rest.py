@@ -67,6 +67,8 @@ def api_query(body: QueryIn):
             cols = []
         return {"columns": cols, "rows": [list(r) for r in rows]}
     except Exception as e:
+        if conn:
+            conn.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         if cur:
@@ -102,6 +104,8 @@ def api_nlp(body: NLPIn):
             cols = []
         return {"sql": sql, "columns": cols, "rows": [list(r) for r in rows]}
     except Exception as e:
+        if conn:
+            conn.rollback()
         raise HTTPException(status_code=400, detail=f"{e} (sql={sql})")
     finally:
         if cur:
