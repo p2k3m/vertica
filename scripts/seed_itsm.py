@@ -1,4 +1,6 @@
 import random, string, datetime as dt, csv, io
+from pathlib import Path
+
 import sqlparse
 from mcp_vertica.connection import VerticaConnectionManager, VerticaConfig
 
@@ -21,7 +23,8 @@ def _rand_id(prefix="INC", n=6):
     return f"{prefix}{''.join(random.choices(string.digits, k=n))}"
 
 def ensure_schema_and_tables(mgr: VerticaConnectionManager):
-    with open("sql/itsm_schema.sql", "r", encoding="utf-8") as f:
+    schema_path = Path(__file__).parent / "sql" / "itsm_schema.sql"
+    with open(schema_path, "r", encoding="utf-8") as f:
         ddl = f.read()
     conn = cur = None
     try:
