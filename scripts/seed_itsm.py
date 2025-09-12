@@ -1,4 +1,5 @@
 import random, string, datetime as dt
+from io import StringIO
 from mcp_vertica.connection import VerticaConnectionManager, VerticaConfig
 
 CI_CLASSES = ["APP", "DB", "VM", "NETWORK", "STORAGE"]
@@ -11,6 +12,10 @@ CATS = ["Database","Network","Application","Security","Storage","OS"]
 def to_csv_lines(rows):
     for row in rows:
         yield ",".join("" if v is None else str(v) for v in row) + "\n"
+
+
+def to_csv_buffer(rows):
+    return StringIO("".join(to_csv_lines(rows)))
 
 def _rand_id(prefix="INC", n=6):
     return f"{prefix}{''.join(random.choices(string.digits, k=n))}"
@@ -39,7 +44,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         for i in range(200):
             cid = _rand_id("CI", 6)
             cis.append((cid, f"ci-{i}", random.choice(CI_CLASSES), random.choice(ENV), "owner@example.com", random.choice(["LOW","MEDIUM","HIGH"])))
-        cur.copy("COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ','", to_csv_lines(cis))
+        cur.copy(
+            "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ','",
+            to_csv_buffer(cis),
+        )
         # CI relations
         def gen_rels():
             for _ in range(400):
@@ -47,7 +55,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 c = random.choice(cis)[0]
                 if p != c:
                     yield (p, random.choice(REL), c)
-        cur.copy("COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ','", to_csv_lines(gen_rels()))
+        cur.copy(
+            "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ','",
+            to_csv_buffer(gen_rels()),
+        )
         # Changes
         base = dt.datetime.now() - dt.timedelta(days=90)
         def gen_changes():
@@ -56,7 +67,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 wstart = base + dt.timedelta(days=random.randint(0, 60))
                 wend = wstart + dt.timedelta(hours=random.choice([1,2,4]))
                 yield (chid, base, wstart, wend, random.choice(["LOW","MEDIUM","HIGH"]), random.choice(["SCHEDULED","IMPLEMENTED","FAILED"]), f"Change {i}", random.choice(cis)[0])
-        cur.copy("COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ','", to_csv_lines(gen_changes()))
+        cur.copy(
+            "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ','",
+            to_csv_buffer(gen_changes()),
+        )
         # Incidents
         def gen_incidents():
             for i in range(n_incidents):
@@ -74,7 +88,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     "Pods evicted due to memory pressure"
                 ])
                 yield (iid, opened, random.choice(PRIO), random.choice(CATS), random.choice(["DBA","NETOPS","APPENG","SECOPS"]), txt[:80], txt, random.choice(STATUS), closed, random.choice(cis)[0])
-        cur.copy("COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ','", to_csv_lines(gen_incidents()))
+        cur.copy(
+            "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ','",
+            to_csv_buffer(gen_incidents()),
+        )
         conn.commit()
     finally:
         if cur: cur.close()
