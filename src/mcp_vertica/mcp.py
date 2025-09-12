@@ -178,6 +178,8 @@ async def execute_query(ctx: Context, query: str) -> str:
         return "Error: No database connection manager available"
 
     statements = [s.strip() for s in sqlparse.split(query) if s.strip()]
+    if not statements:
+        return "Error: No SQL statements provided"
 
     # Check permissions for each statement before executing anything
     for stmt in statements:
@@ -245,6 +247,8 @@ async def stream_query(
         return "Error: No database connection manager available"
 
     statements = [s.strip() for s in sqlparse.split(query) if s.strip()]
+    if not statements:
+        return "Error: No SQL statements provided"
 
     # Check permissions for each statement before executing anything
     for stmt in statements:
