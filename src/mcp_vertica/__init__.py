@@ -250,6 +250,7 @@ def nlp_similar(incident_id, text, top_k):
     res = sim.query(mgr, text=text, incident_id=incident_id)
     for r in res:
         click.echo(r)
+    mgr.close_all()
 
 
 @click.command("serve-rest")
