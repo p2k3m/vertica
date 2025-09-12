@@ -50,8 +50,14 @@ def api_query(body: QueryIn):
         conn = mgr.get_connection()
         cur = conn.cursor()
         cur.execute(body.sql)
-        rows = cur.fetchall()
-        cols = [d[0] for d in cur.description] if cur.description else []
+        if cur.description:
+            rows = cur.fetchall()
+            cols = [d[0] for d in cur.description]
+        else:
+            # Commit to apply changes when no result set is returned
+            conn.commit()
+            rows = []
+            cols = []
         return {"columns": cols, "rows": [list(r) for r in rows]}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -73,8 +79,14 @@ def api_nlp(body: NLPIn):
         conn = mgr.get_connection()
         cur = conn.cursor()
         cur.execute(sql)
-        rows = cur.fetchall()
-        cols = [d[0] for d in cur.description] if cur.description else []
+        if cur.description:
+            rows = cur.fetchall()
+            cols = [d[0] for d in cur.description]
+        else:
+            # Commit to apply changes when no result set is returned
+            conn.commit()
+            rows = []
+            cols = []
         return {"sql": sql, "columns": cols, "rows": [list(r) for r in rows]}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"{e} (sql={sql})")
