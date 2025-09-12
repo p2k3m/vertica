@@ -153,7 +153,23 @@ uvx mcp-vertica --port 8000  # runs SSE (0.0.0.0)
 
 If MCP client can’t connect: uv cache clean and retry.
 
-If Vertica not ready: docker logs vertica-ce and re-run after healthy.
+If Vertica not ready: `docker logs vertica-ce` and re-run after healthy. To
+check databases:
+
+```bash
+admintools -t list_all_dbs
+# Name    | Owner   | State
+# VMart   | dbadmin | Running
+```
+
+Inspect a specific database:
+
+```bash
+admintools -t list_db -d VMart
+# Database: VMart
+# State: Running
+# v_vmart_node0001 (UP)
+```
 
 If Ollama fails: ensure ollama serve is running and you pulled a model.
 
