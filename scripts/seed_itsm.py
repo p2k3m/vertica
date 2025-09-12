@@ -1,6 +1,7 @@
 import random, string, datetime as dt
 from pathlib import Path
 
+import io
 import sqlparse
 from mcp_vertica.connection import VerticaConnectionManager, VerticaConfig
 
@@ -53,9 +54,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
             ci_ids.add(cid)
             cis.append((cid, f"ci-{i}", random.choice(CI_CLASSES), random.choice(ENV), "owner@example.com", random.choice(["LOW","MEDIUM","HIGH"])))
         try:
+            buf = io.StringIO("".join(to_csv_lines(cis)))
             cur.copy(
                 "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' NULL ''",
-                to_csv_lines(cis),
+                buf,
             )
         except Exception:
             conn.rollback()
@@ -68,9 +70,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 if p != c:
                     yield (p, random.choice(REL), c)
         try:
+            buf = io.StringIO("".join(to_csv_lines(gen_rels())))
             cur.copy(
                 "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' NULL ''",
-                to_csv_lines(gen_rels()),
+                buf,
             )
         except Exception:
             conn.rollback()
@@ -98,9 +101,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     random.choice(cis)[0],
                 )
         try:
+            buf = io.StringIO("".join(to_csv_lines(gen_changes())))
             cur.copy(
                 "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' NULL ''",
-                to_csv_lines(gen_changes()),
+                buf,
             )
         except Exception:
             conn.rollback()
@@ -138,9 +142,10 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     random.choice(cis)[0],
                 )
         try:
+            buf = io.StringIO("".join(to_csv_lines(gen_incidents())))
             cur.copy(
                 "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' NULL ''",
-                to_csv_lines(gen_incidents()),
+                buf,
             )
         except Exception:
             conn.rollback()
