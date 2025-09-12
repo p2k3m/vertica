@@ -152,7 +152,7 @@ async def execute_query(ctx: Context, query: str) -> str:
     if operation:
         schemas_to_check = schemas or {"default"}
         for schema in schemas_to_check:
-            if not manager.is_operation_allowed(schema=schema, operation=operation):
+            if not manager.is_operation_allowed(schema=schema.lower(), operation=operation):
                 error_msg = f"Operation {operation.name} not allowed for schema {schema}"
                 await ctx.error(error_msg)
                 return error_msg
@@ -213,7 +213,7 @@ async def stream_query(
     if operation:
         schemas_to_check = schemas or {"default"}
         for schema in schemas_to_check:
-            if not manager.is_operation_allowed(schema=schema, operation=operation):
+            if not manager.is_operation_allowed(schema=schema.lower(), operation=operation):
                 error_msg = f"Operation {operation.name} not allowed for schema {schema}"
                 await ctx.error(error_msg)
                 return error_msg
@@ -278,7 +278,7 @@ async def copy_data(
         return "Error: No database connection manager available"
 
     # Check operation permissions
-    if not manager.is_operation_allowed(schema=schema, operation=OperationType.INSERT):
+    if not manager.is_operation_allowed(schema=schema.lower(), operation=OperationType.INSERT):
         error_msg = f"INSERT operation not allowed for schema {schema}"
         await ctx.error(error_msg)
         return error_msg
