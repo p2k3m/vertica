@@ -195,6 +195,17 @@ class VerticaConnectionPool:
 
             try:
                 conn = self.pool.get(timeout=5)  # 5 second timeout
+
+                if conn.closed():
+                    logger.warning(
+                        "Retrieved Vertica connection is closed; attempting to replace it"
+                    )
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                    conn = vertica_python.connect(**self._get_connection_config())
+
                 self.active_connections += 1
                 # Track the connection as checked out so we can verify it on release
                 self.checked_out_connections.add(conn)
