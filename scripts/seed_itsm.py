@@ -42,10 +42,14 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         for i in range(200):
             cid = _rand_id("CI", 6)
             cis.append((cid, f"ci-{i}", random.choice(CI_CLASSES), random.choice(ENV), "owner@example.com", random.choice(["LOW","MEDIUM","HIGH"])))
-        cur.copy(
-            "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
-            to_csv_buffer(cis),
-        )
+        try:
+            cur.copy(
+                "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
+                to_csv_buffer(cis),
+            )
+        except Exception:
+            conn.rollback()
+            raise
         # CI relations
         def gen_rels():
             for _ in range(400):
@@ -53,10 +57,14 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                 c = random.choice(cis)[0]
                 if p != c:
                     yield (p, random.choice(REL), c)
-        cur.copy(
-            "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
-            to_csv_buffer(gen_rels()),
-        )
+        try:
+            cur.copy(
+                "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
+                to_csv_buffer(gen_rels()),
+            )
+        except Exception:
+            conn.rollback()
+            raise
         # Changes
         base = dt.datetime.now() - dt.timedelta(days=90)
         def gen_changes():
@@ -75,10 +83,14 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     f"Change {i}",
                     random.choice(cis)[0],
                 )
-        cur.copy(
-            "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
-            to_csv_buffer(gen_changes()),
-        )
+        try:
+            cur.copy(
+                "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
+                to_csv_buffer(gen_changes()),
+            )
+        except Exception:
+            conn.rollback()
+            raise
         # Incidents
         def gen_incidents():
             for i in range(n_incidents):
@@ -96,10 +108,14 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
                     "Pods evicted due to memory pressure"
                 ])
                 yield (iid, opened, random.choice(PRIO), random.choice(CATS), random.choice(["DBA","NETOPS","APPENG","SECOPS"]), txt[:80], txt, random.choice(STATUS), closed, random.choice(cis)[0])
-        cur.copy(
-            "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
-            to_csv_buffer(gen_incidents()),
-        )
+        try:
+            cur.copy(
+                "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
+                to_csv_buffer(gen_incidents()),
+            )
+        except Exception:
+            conn.rollback()
+            raise
         conn.commit()
     finally:
         if cur: cur.close()
