@@ -69,11 +69,24 @@ class VerticaConfig:
             env_var, perm_type = schema_perm
             if perm_str := os.getenv(env_var):
                 for pair in perm_str.split(','):
-                    schema, value = pair.split(':')
-                    schema = schema.strip()
+                    pair = pair.strip()
+                    if not pair:
+                        continue
+                    try:
+                        schema, value = pair.split(':', 1)
+                    except ValueError:
+                        logger.warning(
+                            "Invalid schema permission entry '%s' in %s", pair, env_var
+                        )
+                        continue
+                    schema = schema.strip().lower()
                     if schema not in schema_permissions:
                         schema_permissions[schema] = SchemaPermissions()
-                    setattr(schema_permissions[schema], perm_type, value.strip().lower() == 'true')
+                    setattr(
+                        schema_permissions[schema],
+                        perm_type,
+                        value.strip().lower() == 'true',
+                    )
 
         return cls(
             host=os.getenv("VERTICA_HOST", "localhost"),
