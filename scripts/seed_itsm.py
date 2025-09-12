@@ -1,5 +1,4 @@
-import random, string, datetime as dt
-from io import StringIO
+import random, string, datetime as dt, csv, io
 from mcp_vertica.connection import VerticaConnectionManager, VerticaConfig
 
 CI_CLASSES = ["APP", "DB", "VM", "NETWORK", "STORAGE"]
@@ -9,13 +8,11 @@ STATUS = ["OPEN","ASSIGNED","IN_PROGRESS","RESOLVED","CLOSED"]
 REL = ["DEPENDS_ON","RUNS_ON","HOSTED_ON"]
 CATS = ["Database","Network","Application","Security","Storage","OS"]
 
-def to_csv_lines(rows):
-    for row in rows:
-        yield ",".join("" if v is None else str(v) for v in row) + "\n"
-
-
 def to_csv_buffer(rows):
-    return StringIO("".join(to_csv_lines(rows)))
+    buf = io.StringIO()
+    csv.writer(buf).writerows(rows)
+    buf.seek(0)
+    return buf
 
 def _rand_id(prefix="INC", n=6):
     return f"{prefix}{''.join(random.choices(string.digits, k=n))}"
