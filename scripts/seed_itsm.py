@@ -1,4 +1,5 @@
 import random, string, datetime as dt, csv, io
+import sqlparse
 from mcp_vertica.connection import VerticaConnectionManager, VerticaConfig
 
 CI_CLASSES = ["APP", "DB", "VM", "NETWORK", "STORAGE"]
@@ -25,8 +26,8 @@ def ensure_schema_and_tables(mgr: VerticaConnectionManager):
         conn = mgr.get_connection()
         cur = conn.cursor()
         try:
-            for stmt in [s.strip() for s in ddl.split(";") if s.strip()]:
-                cur.execute(stmt + ";")
+            for stmt in [s.strip() for s in sqlparse.split(ddl) if s.strip()]:
+                cur.execute(stmt)
             conn.commit()
         except Exception:
             conn.rollback()
