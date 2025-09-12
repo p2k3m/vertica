@@ -1,7 +1,8 @@
+import os
 import requests
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Any, Optional
+from typing import List, Optional
 from .connection import VerticaConnectionManager
 
 SYS_PROMPT = """You are a SQL generator for Vertica.
@@ -29,26 +30,57 @@ EXAMPLES = [
 class NL2SQL:
     ollama_host: str = "http://127.0.0.1:11434"
     model: str = "llama3.1:8b"
+    schemas: Optional[List[str]] = None
+
+    def __post_init__(self):
+        if self.schemas is None:
+            env = os.getenv("VERTICA_NLP_SCHEMAS")
+            if env:
+                self.schemas = [s.strip() for s in env.split(",") if s.strip()]
 
     def _schema_snapshot(self, mgr: VerticaConnectionManager) -> str:
         conn = cur = None
         try:
             conn = mgr.get_connection()
             cur = conn.cursor()
-            cur.execute("""
+
+            cur.execute("SELECT schema_name FROM v_catalog.schemata")
+            db_schemas = [r[0] for r in cur.fetchall()]
+
+            # Start with user override if provided; otherwise all DB schemas
+            if self.schemas:
+                schema_names = [s.lower() for s in self.schemas]
+            else:
+                schema_names = [s.lower() for s in db_schemas]
+                # Optional filter based on connection config
+                if mgr.config and mgr.config.schema_permissions:
+                    allowed = {k.lower() for k in mgr.config.schema_permissions.keys()}
+                    if allowed:
+                        schema_names = [s for s in schema_names if s in allowed]
+
+            if not schema_names:
+                return ""
+
+            placeholders = ",".join(["%s"] * len(schema_names))
+            cur.execute(
+                f"""
                 SELECT table_schema, table_name, column_name, data_type
                 FROM v_catalog.columns
-                WHERE table_schema IN ('itsm','cmdb','public','store','VMart')
+                WHERE LOWER(table_schema) IN ({placeholders})
                 ORDER BY table_schema, table_name, ordinal_position
-            """)
+                """,
+                schema_names,
+            )
             rows = cur.fetchall()
             lines = []
             for s, t, c, dt in rows:
-                lines.append(f"{s}.{t}.{c} {dt}")
+                lines.append(f"{s.lower()}.{t.lower()}.{c.lower()} {dt}")
             return "\n".join(lines[:800])  # cap to keep prompt small
         finally:
-            if cur: cur.close()
-            if conn: mgr.release_connection(conn)
+            if cur:
+                cur.close()
+            if conn:
+                mgr.release_connection(conn)
 
     def generate_sql(self, mgr: VerticaConnectionManager, question: str) -> str:
         schema_txt = self._schema_snapshot(mgr)
