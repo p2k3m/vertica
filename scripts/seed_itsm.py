@@ -60,7 +60,27 @@ def ensure_schema_and_tables(mgr: VerticaConnectionManager):
         try:
             for stmt in [s.strip() for s in sqlparse.split(ddl) if s.strip()]:
                 cur.execute(stmt)
+            expected_tables = [
+                ("itsm", "incident"),
+                ("itsm", "change"),
+                ("cmdb", "ci"),
+                ("cmdb", "ci_rel"),
+            ]
+            verified = []
+            missing = []
+            for schema, table in expected_tables:
+                cur.execute(
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema = %s AND table_name = %s",
+                    (schema, table),
+                )
+                if cur.fetchone():
+                    verified.append(f"{schema}.{table}")
+                else:
+                    missing.append(f"{schema}.{table}")
+            if missing:
+                raise RuntimeError(f"Missing expected tables: {', '.join(missing)}")
             conn.commit()
+            logger.info("Verified tables: %s", ", ".join(verified))
         except Exception:
             conn.rollback()
             raise
