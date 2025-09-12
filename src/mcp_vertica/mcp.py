@@ -39,13 +39,10 @@ def extract_operation_type(query: str) -> OperationType | None:
             return None
 
         # Skip initial WITH/CTE block
-        if token.ttype is T.Keyword.CTE and token.normalized == "WITH":
-            while True:
-                idx, token = statement.token_next(idx, skip_ws=True, skip_cm=True)
-                if token is None:
-                    return None
-                if token.ttype in T.Keyword:
-                    break
+        if token.match(T.Keyword, "WITH"):
+            idx, token = statement.token_next_by(t=(T.Keyword.DML,))
+            if token is None:
+                return None
             break
 
         break
