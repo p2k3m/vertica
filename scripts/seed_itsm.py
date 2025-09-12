@@ -11,7 +11,9 @@ CATS = ["Database","Network","Application","Security","Storage","OS"]
 
 def to_csv_buffer(rows):
     buf = io.StringIO()
-    csv.writer(buf, lineterminator="\n").writerows(rows)
+    writer = csv.writer(buf, lineterminator="\n")
+    for row in rows:
+        writer.writerow(["\\N" if v is None else v for v in row])
     buf.seek(0)
     return buf
 
@@ -54,7 +56,7 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         try:
             buf = to_csv_buffer(cis)
             cur.copy(
-                "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
+                "COPY cmdb.ci (id,name,class,environment,owner,criticality) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\N'",
                 buf,
             )
         except Exception:
@@ -70,7 +72,7 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         try:
             buf = to_csv_buffer(gen_rels())
             cur.copy(
-                "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
+                "COPY cmdb.ci_rel (parent_ci,relation,child_ci) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\N'",
                 buf,
             )
         except Exception:
@@ -101,7 +103,7 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         try:
             buf = to_csv_buffer(gen_changes())
             cur.copy(
-                "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
+                "COPY itsm.change (id, requested_at, window_start, window_end, risk, status, description, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\N'",
                 buf,
             )
         except Exception:
@@ -142,7 +144,7 @@ def synthesize_and_load(mgr: VerticaConnectionManager, n_incidents: int = 2000):
         try:
             buf = to_csv_buffer(gen_incidents())
             cur.copy(
-                "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"'",
+                "COPY itsm.incident (id, opened_at, priority, category, assignment_group, short_desc, description, status, closed_at, ci_id) FROM STDIN DELIMITER ',' ENCLOSED BY '\"' NULL '\N'",
                 buf,
             )
         except Exception:
