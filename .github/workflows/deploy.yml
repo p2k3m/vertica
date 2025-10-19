@@ -85,12 +85,21 @@ jobs:
         run: |
           terraform output -json > tfout.json
           cat tfout.json
+      - name: Upload Terraform outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs
+          path: infra/tfout.json
 
   smoke:
     needs: infra
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Download Terraform outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-outputs
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
       - name: Read outputs
