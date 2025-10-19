@@ -9,10 +9,17 @@ from pathlib import Path
 from typing import Optional
 
 import click
-from dotenv import load_dotenv
+
+try:  # pragma: no cover - optional dependency for tests
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - optional dependency for tests
+    def load_dotenv(*args, **kwargs):
+        logging.getLogger("mcp-vertica").warning(
+            "python-dotenv not installed; skipping .env loading"
+        )
+        return False
 
 from .__about__ import __version__
-from .mcp import mcp, run_http, run_sse
 
 logger = logging.getLogger("mcp-vertica")
 
@@ -52,6 +59,8 @@ def cli(transport: str, host: str, port: int, env_file: Optional[str], verbose: 
     _load_env_file(env_file)
     if read_only is not None:
         os.environ["MCP_READ_ONLY"] = "true" if read_only else "false"
+
+    from .mcp import mcp, run_http, run_sse
 
     if transport == "stdio":
         mcp.run()

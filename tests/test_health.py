@@ -1,6 +1,10 @@
 import asyncio
 import json
 
+import pytest
+
+pytest.importorskip("starlette")
+
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.testclient import TestClient
