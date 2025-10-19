@@ -1,0 +1,229 @@
+name: Vertica MCP CI/CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Choose apply to provision or destroy to tear down
+        required: true
+        default: apply
+        type: choice
+        options:
+          - apply
+          - destroy
+
+env:
+  AWS_REGION: ap-south-1
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install uv
+        run: pip install uv
+      - name: Sync dependencies
+        run: uv sync --frozen
+      - name: Run ruff
+        run: uv run ruff check
+      - name: Run tests
+        run: uv run pytest -q
+
+  build:
+    needs: lint-test
+    if: github.event_name == 'push' || github.event.inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine AWS auth method
+        id: auth
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          if [[ -n "$AWS_ROLE_TO_ASSUME" ]]; then
+            echo "method=oidc" >>"$GITHUB_OUTPUT"
+          elif [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "method=keys" >>"$GITHUB_OUTPUT"
+          else
+            echo "::error::Missing AWS credentials. Provide AWS_ROLE_TO_ASSUME for OIDC or access keys." >&2
+            exit 1
+          fi
+      - name: Configure AWS credentials (OIDC)
+        if: steps.auth.outputs.method == 'oidc'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials (keys)
+        if: steps.auth.outputs.method == 'keys'
+        run: |
+          echo "Using access keys for AWS authentication"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Build MCP image
+        run: |
+          docker build -f Dockerfile.mcp -t $AWS_ACCOUNT_ID.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ vars.MCP_IMAGE_REPO || 'mcp-vertica' }}:${{ github.sha }} .
+          docker tag $AWS_ACCOUNT_ID.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ vars.MCP_IMAGE_REPO || 'mcp-vertica' }}:${{ github.sha }} \
+            $AWS_ACCOUNT_ID.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ vars.MCP_IMAGE_REPO || 'mcp-vertica' }}:latest
+      - name: Push MCP image
+        run: |
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ vars.MCP_IMAGE_REPO || 'mcp-vertica' }}:${{ github.sha }}
+          docker push $AWS_ACCOUNT_ID.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ vars.MCP_IMAGE_REPO || 'mcp-vertica' }}:latest
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push' || github.event.inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      MCP_HTTP_TOKEN: ${{ secrets.MCP_HTTP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine AWS auth method
+        id: auth
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          if [[ -n "$AWS_ROLE_TO_ASSUME" ]]; then
+            echo "method=oidc" >>"$GITHUB_OUTPUT"
+          elif [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "method=keys" >>"$GITHUB_OUTPUT"
+          else
+            echo "::error::Missing AWS credentials. Provide AWS_ROLE_TO_ASSUME for OIDC or access keys." >&2
+            exit 1
+          fi
+      - name: Configure AWS credentials (OIDC)
+        if: steps.auth.outputs.method == 'oidc'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials (keys)
+        if: steps.auth.outputs.method == 'keys'
+        run: echo "Using access keys for AWS authentication"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - name: Bootstrap Terraform backend
+        working-directory: infra
+        run: |
+          chmod +x backend-bootstrap.sh
+          ./backend-bootstrap.sh
+      - name: Render terraform variables
+        working-directory: infra
+        run: |
+          cat <<EOF >terraform.auto.tfvars
+project         = "${{ vars.PROJECT || 'vertica-mcp' }}"
+region          = "${{ env.AWS_REGION }}"
+allowed_cidrs   = ${{ vars.ALLOWED_CIDRS_JSON || '["127.0.0.1/32"]' }}
+aws_account_id  = "${{ secrets.AWS_ACCOUNT_ID }}"
+vertica_image_uri = "${{ vars.VERTICA_IMAGE_URI || '957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0' }}"
+mcp_image_repo    = "${{ vars.MCP_IMAGE_REPO || 'mcp-vertica' }}"
+mcp_http_token    = "${{ secrets.MCP_HTTP_TOKEN }}"
+use_spot          = ${{ vars.USE_SPOT || 'true' }}
+ebs_size_gb       = ${{ vars.EBS_SIZE_GB || '100' }}
+instance_type     = "${{ vars.INSTANCE_TYPE || 't3.xlarge' }}"
+TFVARS
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -upgrade
+      - name: Terraform plan
+        working-directory: infra
+        run: terraform plan -out=tfplan
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: infra/tfplan
+      - name: Terraform apply
+        working-directory: infra
+        run: terraform apply -auto-approve tfplan
+      - name: Wait for SSM
+        run: |
+          INSTANCE_ID=$(terraform -chdir=infra output -raw instance_id)
+          for i in {1..20}; do
+            STATUS=$(aws ssm describe-instance-information --filters "Key=InstanceIds,Values=$INSTANCE_ID" --query 'InstanceInformationList[0].PingStatus' --output text || echo "Missing")
+            if [[ "$STATUS" == "Online" ]]; then
+              echo "Instance is online"
+              break
+            fi
+            if [[ $i -eq 20 ]]; then
+              echo "::error::Instance not managed by SSM in time" >&2
+              exit 1
+            fi
+            sleep 30
+          done
+      - name: Smoke test via SSM
+        run: |
+          INSTANCE_ID=$(terraform -chdir=infra output -raw instance_id)
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Vertica MCP smoke test" \
+            --parameters commands='["curl -fsS http://127.0.0.1:8000/healthz", "docker ps", "timeout 5 bash -c \"echo > /dev/tcp/127.0.0.1/5433\""]' \
+            --query 'Command.CommandId' --output text)
+          aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID"
+          aws ssm list-command-invocations --command-id "$COMMAND_ID" --details
+
+  destroy:
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Determine AWS auth method
+        id: auth
+        env:
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          if [[ -n "$AWS_ROLE_TO_ASSUME" ]]; then
+            echo "method=oidc" >>"$GITHUB_OUTPUT"
+          elif [[ -n "$AWS_ACCESS_KEY_ID" && -n "$AWS_SECRET_ACCESS_KEY" ]]; then
+            echo "method=keys" >>"$GITHUB_OUTPUT"
+          else
+            echo "::error::Missing AWS credentials. Provide AWS_ROLE_TO_ASSUME for OIDC or access keys." >&2
+            exit 1
+          fi
+      - name: Configure AWS credentials (OIDC)
+        if: steps.auth.outputs.method == 'oidc'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS credentials (keys)
+        if: steps.auth.outputs.method == 'keys'
+        run: echo "Using access keys for AWS authentication"
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      - name: Terraform destroy
+        working-directory: infra
+        run: |
+          terraform init -upgrade
+          terraform destroy -auto-approve

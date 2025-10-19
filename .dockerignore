@@ -1,0 +1,14 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.venv
+.env
+.git
+.gitignore
+.dist
+build
+dist
+uv.lock.bak
+_data

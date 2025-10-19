@@ -1,0 +1,6 @@
+line-length = 100
+
+[lint]
+select = ["E", "F"]
+ignore = ["E501"]
+exclude = ["scripts/seed_itsm.py"]

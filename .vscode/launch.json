@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "MCP Vertica (HTTP)",
+      "type": "python",
+      "request": "launch",
+      "module": "mcp_vertica",
+      "args": ["--transport", "http", "--port", "8000"],
+      "env": {
+        "VERTICA_HOST": "localhost",
+        "VERTICA_PORT": "5433",
+        "VERTICA_DATABASE": "VMart",
+        "VERTICA_USER": "dbadmin",
+        "VERTICA_PASSWORD": ""
+      }
+    }
+  ]
+}
