@@ -40,7 +40,7 @@ services:
     environment:
       VERTICA_HOST: vertica
       VERTICA_PORT: "5433"
-      VERTICA_DATABASE: "vmart"
+      VERTICA_DATABASE: "VMart"
       VERTICA_USER: "dbadmin"
       VERTICA_PASSWORD: "password"
       VERTICA_SSL: "false"

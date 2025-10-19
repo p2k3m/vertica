@@ -105,7 +105,7 @@
 
 83. "Register the HTTP MCP at `http://<dns>:8000` with header `X-Api-Key`."
 84. "Switch to stdio transport on macOS with `uvx mcp-vertica --transport stdio`."
-85. "Pass DB params via query string: `?host=vertica&dbPort=5433&database=vmart&user=dbadmin&password=password`."
+85. "Pass DB params via query string: `?host=vertica&dbPort=5433&database=VMart&user=dbadmin&password=password`."
 86. "Call `get_event_application(limit=10)` to list apps."
 87. "Pivot to `cis_for_business_service(bs_name='Checkout')`."
 88. "Resolve a pod’s cluster: `gke_identify_pod_cluster('POD_ID')`."
