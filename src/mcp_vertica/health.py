@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from copy import deepcopy
 from typing import Any, Dict, Optional
@@ -58,7 +59,13 @@ async def healthz(request: Request) -> JSONResponse:
     """Return health information for HTTP checks."""
 
     payload = _snapshot()
-    status_code = 200 if payload["ok"] else 503
-    if not payload["ok"]:
+    require_ready = os.getenv("MCP_HEALTH_REQUIRE_READY", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    status_code = 200 if payload["ok"] or not require_ready else 503
+    if not payload["ok"] and status_code >= 400:
         logger.warning("healthz failing", extra={"components": payload["components"]})
     return JSONResponse(payload, status_code=status_code)
