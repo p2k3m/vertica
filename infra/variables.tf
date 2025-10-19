@@ -9,6 +9,11 @@ variable "allowed_cidrs" {
   type    = list(string)
   default = ["0.0.0.0/0"]
 }
+
+variable "resource_prefix" {
+  type    = string
+  default = "vertica-mcp"
+}
 variable "aws_account_id" { type = string }
 variable "mcp_http_token" {
   type    = string
