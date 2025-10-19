@@ -107,8 +107,65 @@ jobs:
         run: |
           MCP_URL=$(jq -r .mcp_http_url.value infra/tfout.json)
           echo "MCP_URL=$MCP_URL" >> $GITHUB_ENV
+          INSTANCE_ID=$(jq -r .instance_id.value infra/tfout.json)
+          echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
       - name: Wait for health
         run: |
           for i in $(seq 1 60); do curl -sf "$MCP_URL/healthz" && exit 0; sleep 5; done; exit 1
       - name: Info endpoint
         run: curl -s "$MCP_URL/api/info" | jq .
+      - name: Collect remote logs
+        if: always()
+        continue-on-error: true
+        env:
+          INSTANCE_ID: ${{ env.INSTANCE_ID }}
+        run: |
+          set -u
+          LOG_DIR="remote-logs"
+          mkdir -p "$LOG_DIR"
+          if [[ -z "${INSTANCE_ID:-}" || "$INSTANCE_ID" == "null" ]]; then
+            echo "INSTANCE_ID is not available; skipping log collection"
+            exit 0
+          fi
+
+          run_cmd() {
+            local name="$1"
+            shift
+            local command="$*"
+            echo "::group::Collecting $name"
+            local command_id
+            if ! command_id=$(aws ssm send-command \
+              --instance-ids "$INSTANCE_ID" \
+              --document-name "AWS-RunShellScript" \
+              --comment "Fetch $name" \
+              --parameters commands="$command" \
+              --query 'Command.CommandId' \
+              --output text); then
+              echo "Failed to start SSM command for $name" >&2
+              echo "::endgroup::"
+              return 0
+            fi
+
+            aws ssm wait command-executed --instance-id "$INSTANCE_ID" --command-id "$command_id" || true
+
+            aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
+              --query 'StandardOutputContent' --output text >"$LOG_DIR/${name}.log" || true
+            aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
+              --query 'StandardErrorContent' --output text >"$LOG_DIR/${name}.err.log" || true
+            aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
+              --query 'Status' --output text >"$LOG_DIR/${name}.status" || true
+            echo "::endgroup::"
+          }
+
+          run_cmd user-data "sudo cat /var/log/user-data.log"
+          run_cmd docker-ps "sudo docker ps -a"
+          run_cmd mcp-logs "sudo docker logs mcp_vertica"
+          run_cmd vertica-logs "sudo docker logs vertica_ce"
+          run_cmd health-check "curl -sv http://127.0.0.1:8000/healthz || true"
+
+      - name: Upload remote logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: remote-logs
+          path: remote-logs
