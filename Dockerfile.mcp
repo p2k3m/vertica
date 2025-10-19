@@ -10,11 +10,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
-RUN uv pip sync --system uv.lock && \
-    uv pip install --system --no-deps -e .
+RUN uv export --no-dev --frozen --format requirements.txt --output requirements.lock && \
+    uv pip sync --system requirements.lock
 
 COPY src ./src
 COPY sql ./sql
+RUN uv pip install --system --no-deps -e .
 
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
