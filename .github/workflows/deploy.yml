@@ -110,12 +110,26 @@ jobs:
           INSTANCE_ID=$(jq -r .instance_id.value infra/tfout.json)
           echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
       - name: Wait for health
+        id: wait_for_health
+        continue-on-error: true
         run: |
-          for i in $(seq 1 60); do curl -sf "$MCP_URL/healthz" && exit 0; sleep 5; done; exit 1
+          set -Eeuo pipefail
+          echo "Checking $MCP_URL/healthz"
+          for i in $(seq 1 60); do
+            if curl -sf "$MCP_URL/healthz"; then
+              echo "health_ready=true" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            echo "Attempt $i/60 failed; retrying in 5s" >&2
+            sleep 5
+          done
+          echo "health_ready=false" >>"$GITHUB_OUTPUT"
+          exit 1
       - name: Info endpoint
+        if: ${{ steps.wait_for_health.outcome == 'success' }}
         run: curl -s "$MCP_URL/api/info" | jq .
       - name: Collect remote logs
-        if: always()
+        if: ${{ always() }}
         continue-on-error: true
         env:
           INSTANCE_ID: ${{ env.INSTANCE_ID }}
@@ -148,12 +162,34 @@ jobs:
 
             aws ssm wait command-executed --instance-id "$INSTANCE_ID" --command-id "$command_id" || true
 
+            local stdout_file="$LOG_DIR/${name}.log"
+            local stderr_file="$LOG_DIR/${name}.err.log"
+            local status_file="$LOG_DIR/${name}.status"
             aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
-              --query 'StandardOutputContent' --output text >"$LOG_DIR/${name}.log" || true
+              --query 'StandardOutputContent' --output text >"$stdout_file" || true
             aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
-              --query 'StandardErrorContent' --output text >"$LOG_DIR/${name}.err.log" || true
+              --query 'StandardErrorContent' --output text >"$stderr_file" || true
             aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
-              --query 'Status' --output text >"$LOG_DIR/${name}.status" || true
+              --query 'Status' --output text >"$status_file" || true
+
+            if [[ -s "$stdout_file" ]]; then
+              echo "--- $name stdout ---"
+              cat "$stdout_file"
+            else
+              echo "--- $name stdout (empty) ---"
+            fi
+
+            if [[ -s "$stderr_file" ]]; then
+              echo "--- $name stderr ---" >&2
+              cat "$stderr_file" >&2
+            else
+              echo "--- $name stderr (empty) ---"
+            fi
+
+            if [[ -f "$status_file" ]]; then
+              echo "status: $(cat "$status_file")"
+            fi
+
             echo "::endgroup::"
           }
 
@@ -164,8 +200,13 @@ jobs:
           run_cmd health-check "curl -sv http://127.0.0.1:8000/healthz || true"
 
       - name: Upload remote logs
-        if: always()
+        if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
           name: remote-logs
           path: remote-logs
+      - name: Fail if health check failed
+        if: ${{ steps.wait_for_health.outcome == 'failure' }}
+        run: |
+          echo "Health check did not succeed" >&2
+          exit 1
