@@ -18,7 +18,7 @@ data "aws_subnets" "default" {
 }
 
 resource "aws_security_group" "mcp" {
-  name        = "vertica-mcp-sg"
+  name_prefix = "${var.resource_prefix}-sg-"
   description = "Ingress for Vertica and MCP"
   vpc_id      = data.aws_vpc.default.id
 
@@ -49,7 +49,7 @@ resource "aws_security_group" "mcp" {
 }
 
 resource "aws_iam_role" "ec2" {
-  name = "vertica-mcp-ec2-role"
+  name_prefix = "${var.resource_prefix}-ec2-role-"
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{ Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole" }]
@@ -60,7 +60,7 @@ resource "aws_iam_role_policy_attachment" "ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 resource "aws_iam_policy" "ecr_read" {
-  name   = "vertica-mcp-ecr-read"
+  name_prefix = "${var.resource_prefix}-ecr-read-"
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -75,7 +75,7 @@ resource "aws_iam_role_policy_attachment" "ecr_attach" {
   policy_arn = aws_iam_policy.ecr_read.arn
 }
 resource "aws_iam_instance_profile" "ec2" {
-  name = "vertica-mcp-profile"
+  name_prefix = "${var.resource_prefix}-profile-"
   role = aws_iam_role.ec2.name
 }
 
@@ -84,7 +84,7 @@ resource "tls_private_key" "this" {
   rsa_bits  = 2048
 }
 resource "aws_key_pair" "this" {
-  key_name   = "vertica-mcp-key"
+  key_name_prefix = "${var.resource_prefix}-key-"
   public_key = tls_private_key.this.public_key_openssh
 }
 
