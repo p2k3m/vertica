@@ -251,6 +251,9 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
 
 class AuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[override]
+        path = request.url.path.rstrip("/") or "/"
+        if path in {"/healthz", "/_alive"}:
+            return await call_next(request)
         token = os.getenv("MCP_HTTP_TOKEN")
         if not token:
             return await call_next(request)
