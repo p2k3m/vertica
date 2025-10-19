@@ -69,11 +69,11 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Configure AWS credentials (keys)
         if: steps.auth.outputs.method == 'keys'
-        run: |
-          echo "Using access keys for AWS authentication"
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
       - name: Build MCP image
@@ -121,10 +121,11 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Configure AWS credentials (keys)
         if: steps.auth.outputs.method == 'keys'
-        run: echo "Using access keys for AWS authentication"
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
       - name: Bootstrap Terraform backend
         working-directory: infra
         run: |
@@ -218,10 +219,11 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
       - name: Configure AWS credentials (keys)
         if: steps.auth.outputs.method == 'keys'
-        run: echo "Using access keys for AWS authentication"
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
       - name: Terraform destroy
         working-directory: infra
         run: |
