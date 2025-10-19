@@ -1,0 +1,99 @@
+name: DB Stack (apply/destroy)
+
+on:
+  push:
+    paths:
+      - deploy/db/**
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        required: true
+        default: apply
+        options:
+          - apply
+          - destroy
+
+concurrency: db-stack
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+      AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+      AWS_OIDC_ROLE_SESSION_NAME: ${{ secrets.AWS_OIDC_ROLE_SESSION_NAME }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      ALLOWED_CIDRS: ${{ secrets.ALLOWED_CIDRS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail fast if credentials missing
+        run: |
+          if [ -z "${AWS_REGION}" ] || [ -z "${AWS_ACCOUNT_ID}" ]; then
+            echo "::error::Missing AWS_REGION or AWS_ACCOUNT_ID secret"; exit 1; fi
+          if [ -z "${AWS_ROLE_TO_ASSUME}" ] && { [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; }; then
+            echo "::error::Provide AWS_ROLE_TO_ASSUME (OIDC) OR AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY"; exit 1; fi
+
+      - name: Configure AWS (prefer OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' }}
+
+      - name: Configure AWS (static keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME == '' }}
+
+      - name: Bootstrap backend (idempotent)
+        working-directory: deploy/db/terraform
+        run: ./backend-bootstrap.sh
+
+      - name: Terraform init
+        working-directory: deploy/db/terraform
+        run: terraform init -upgrade
+
+      - name: Terraform ${{ github.event.inputs.action || 'apply' }}
+        working-directory: deploy/db/terraform
+        run: |
+          ACTION="${{ github.event.inputs.action || 'apply' }}"
+          if [ "$ACTION" = "destroy" ]; then
+            terraform destroy -auto-approve -var="aws_region=${AWS_REGION}" -var="aws_account_id=${AWS_ACCOUNT_ID}"
+            exit 0
+          fi
+          terraform apply -auto-approve \
+            -var="aws_region=${AWS_REGION}" \
+            -var="aws_account_id=${AWS_ACCOUNT_ID}" \
+            -var='allowed_cidrs=[${ALLOWED_CIDRS:+"'${ALLOWED_CIDRS//,/","}'"}]'
+
+      - name: Fetch outputs
+        id: tfout
+        working-directory: deploy/db/terraform
+        run: |
+          echo "PUBLIC_IP=$(terraform output -raw db_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "CONN=$(terraform output -raw db_conn)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test via SSM
+        if: ${{ github.event.inputs.action != 'destroy' }}
+        run: |
+          IID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=vertica-db" "Name=instance-state-name,Values=running" \
+                --query "Reservations[0].Instances[0].InstanceId" --output text)
+          aws ssm send-command --instance-ids "$IID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="/usr/local/bin/db-smoke.sh" \
+            --query "Command.CommandId" --output text > cmd.txt
+          CID=$(cat cmd.txt)
+          aws ssm wait command-executed --command-id "$CID" --instance-id "$IID"
+
+      - name: Summarize
+        run: |
+          echo "### DB ready" >> "$GITHUB_STEP_SUMMARY"
+          echo "Public IP: ${{ steps.tfout.outputs.PUBLIC_IP }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "Connect string: ${{ steps.tfout.outputs.CONN }}" >> "$GITHUB_STEP_SUMMARY"
