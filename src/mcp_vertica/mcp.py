@@ -10,7 +10,7 @@ import logging
 import os
 import re
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, AsyncIterator, Dict, List, Optional, Sequence
@@ -230,12 +230,17 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     manager = VerticaConnectionManager()
     attempts = 0
     ready_since: Optional[str] = None
-    try:
+    last_error: Optional[str] = None
+    stop_event = asyncio.Event()
+
+    async def _initialize() -> None:
+        nonlocal attempts, ready_since, last_error
         config = VerticaConfig.from_env()
         max_attempts = max(1, int(os.getenv("MCP_INIT_MAX_ATTEMPTS", "30")))
         base_delay = max(0.1, float(os.getenv("MCP_INIT_RETRY_SECONDS", "2")))
         max_delay = max(base_delay, float(os.getenv("MCP_INIT_MAX_RETRY_SECONDS", "30")))
         delay = base_delay
+
         set_component_status(
             VERTICA_COMPONENT,
             ready=False,
@@ -244,35 +249,43 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
             last_attempt_utc=None,
             ready_since_utc=None,
         )
-        while True:
+
+        while not stop_event.is_set():
             attempts += 1
             last_attempt = _now_iso()
             try:
                 manager.initialize_default(config)
-            except Exception as exc:
-                error_message = f"{type(exc).__name__}: {exc}"
+            except Exception as exc:  # pragma: no cover - logging path validated via tests
+                last_error = f"{type(exc).__name__}: {exc}"
                 set_component_status(
                     VERTICA_COMPONENT,
                     ready=False,
                     attempts=attempts,
-                    last_error=error_message,
+                    last_error=last_error,
                     last_attempt_utc=last_attempt,
                     ready_since_utc=ready_since,
                 )
-                logger.exception(
-                    "Failed to initialize Vertica connection pool",
-                    extra={"attempt": attempts, "delay_seconds": delay},
-                )
-                if attempts >= max_attempts:
-                    logger.critical(
-                        "Unable to initialize Vertica after retries",
-                        extra={"attempts": attempts},
+                log_extra = {"attempt": attempts, "delay_seconds": delay}
+                if attempts <= max_attempts:
+                    logger.exception(
+                        "Failed to initialize Vertica connection pool",
+                        extra=log_extra,
                     )
-                    raise
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, max_delay)
-                continue
+                else:
+                    logger.error(
+                        "Vertica initialization still failing; continuing to retry",
+                        extra=log_extra,
+                    )
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=delay)
+                except asyncio.TimeoutError:
+                    delay = min(delay * 2, max_delay)
+                    continue
+                except asyncio.CancelledError:
+                    return
+                return
             ready_since = _now_iso()
+            last_error = None
             set_component_status(
                 VERTICA_COMPONENT,
                 ready=True,
@@ -285,10 +298,21 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
                 "Vertica connection pool ready",
                 extra={"limit": config.connection_limit, "attempts": attempts},
             )
-            break
-        _VERTICA_MANAGER = manager
+            return
+
+    initializer_task = asyncio.create_task(_initialize())
+    _VERTICA_MANAGER = manager
+    try:
         yield {"vertica_manager": manager}
     finally:
+        stop_event.set()
+        if not initializer_task.done():
+            initializer_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await initializer_task
+        else:
+            with suppress(asyncio.CancelledError):
+                await initializer_task
         manager.close_all()
         if _VERTICA_MANAGER is manager:
             _VERTICA_MANAGER = None
@@ -296,7 +320,7 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
             VERTICA_COMPONENT,
             ready=False,
             attempts=attempts,
-            last_error=None,
+            last_error=last_error,
             last_attempt_utc=_now_iso(),
             ready_since_utc=ready_since,
         )
