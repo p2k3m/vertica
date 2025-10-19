@@ -28,10 +28,12 @@ from starlette.routing import Mount
 import uvicorn
 
 from .connection import OperationType, VerticaConfig, VerticaConnectionManager
-from .health import healthz
+from .health import healthz, set_component_status
 from .sql_loader import SQL
 
 logger = logging.getLogger("mcp-vertica")
+
+VERTICA_COMPONENT = "vertica"
 
 
 SCHEMA_DEFAULT = os.environ.get("VERTICA_SCHEMA", "mf_shared_provider_default")
@@ -226,16 +228,78 @@ _VERTICA_MANAGER: VerticaConnectionManager | None = None
 async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
     global _VERTICA_MANAGER
     manager = VerticaConnectionManager()
+    attempts = 0
+    ready_since: Optional[str] = None
     try:
         config = VerticaConfig.from_env()
-        manager.initialize_default(config)
-        logger.info("Vertica connection pool ready", extra={"limit": config.connection_limit})
+        max_attempts = max(1, int(os.getenv("MCP_INIT_MAX_ATTEMPTS", "30")))
+        base_delay = max(0.1, float(os.getenv("MCP_INIT_RETRY_SECONDS", "2")))
+        max_delay = max(base_delay, float(os.getenv("MCP_INIT_MAX_RETRY_SECONDS", "30")))
+        delay = base_delay
+        set_component_status(
+            VERTICA_COMPONENT,
+            ready=False,
+            attempts=attempts,
+            last_error=None,
+            last_attempt_utc=None,
+            ready_since_utc=None,
+        )
+        while True:
+            attempts += 1
+            last_attempt = _now_iso()
+            try:
+                manager.initialize_default(config)
+            except Exception as exc:
+                error_message = f"{type(exc).__name__}: {exc}"
+                set_component_status(
+                    VERTICA_COMPONENT,
+                    ready=False,
+                    attempts=attempts,
+                    last_error=error_message,
+                    last_attempt_utc=last_attempt,
+                    ready_since_utc=ready_since,
+                )
+                logger.exception(
+                    "Failed to initialize Vertica connection pool",
+                    extra={"attempt": attempts, "delay_seconds": delay},
+                )
+                if attempts >= max_attempts:
+                    logger.critical(
+                        "Unable to initialize Vertica after retries",
+                        extra={"attempts": attempts},
+                    )
+                    raise
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, max_delay)
+                continue
+            ready_since = _now_iso()
+            set_component_status(
+                VERTICA_COMPONENT,
+                ready=True,
+                attempts=attempts,
+                last_error=None,
+                last_attempt_utc=last_attempt,
+                ready_since_utc=ready_since,
+            )
+            logger.info(
+                "Vertica connection pool ready",
+                extra={"limit": config.connection_limit, "attempts": attempts},
+            )
+            break
         _VERTICA_MANAGER = manager
         yield {"vertica_manager": manager}
     finally:
         manager.close_all()
         if _VERTICA_MANAGER is manager:
             _VERTICA_MANAGER = None
+        set_component_status(
+            VERTICA_COMPONENT,
+            ready=False,
+            attempts=attempts,
+            last_error=None,
+            last_attempt_utc=_now_iso(),
+            ready_since_utc=ready_since,
+        )
         logger.info("Vertica connection pool closed")
 
 
