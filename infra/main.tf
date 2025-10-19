@@ -106,6 +106,7 @@ resource "aws_instance" "mcp" {
   vpc_security_group_ids = [aws_security_group.mcp.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
   user_data = templatefile("${path.module}/user_data.sh", {
+    REGION            = var.region
     AWS_ACCOUNT_ID    = var.aws_account_id
     VERTICA_IMAGE_URI = var.vertica_image_uri
     MCP_IMAGE_REPO    = var.mcp_image_repo
