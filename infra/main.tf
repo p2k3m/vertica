@@ -109,6 +109,7 @@ resource "aws_instance" "mcp" {
     REGION            = var.region
     AWS_ACCOUNT_ID    = var.aws_account_id
     VERTICA_IMAGE_URI = var.vertica_image_uri
+    MCP_IMAGE_URI     = "${var.aws_account_id}.dkr.ecr.${var.region}.amazonaws.com/${var.mcp_image_repo}:${var.mcp_image_tag}"
     MCP_IMAGE_REPO    = var.mcp_image_repo
     MCP_IMAGE_TAG     = var.mcp_image_tag
     MCP_HTTP_TOKEN    = var.mcp_http_token
