@@ -1,7 +1,7 @@
 variable "region" { default = "ap-south-1" }
 variable "use_spot" {
   type    = bool
-  default = true
+  default = false
 }
 variable "instance_type" { default = "t3.xlarge" }
 variable "volume_size_gb" { default = 100 }
