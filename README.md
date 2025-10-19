@@ -1,61 +1,62 @@
-# Vertica MCP Platform
+# Vertica MCP on AWS – Drop-in Pack
 
-This repository packages a production-style Model Context Protocol (MCP) server that connects
-Claude to Vertica CE locally and in AWS. It includes:
+This repository delivers a low-cost, single-command deployment for Vertica CE and the Vertica MCP server. It includes Terraform infrastructure, a GitHub Actions deployment pipeline, container tooling for local development, and 100+ automation prompts for MCP-aware agents.
 
-* A hardened MCP server with configurable auth, health checks, and SQL templates stored under `sql/`.
-* Docker tooling for local development and a purpose-built `Dockerfile.mcp` image.
-* Terraform IaC that provisions a single EC2 instance with Vertica CE + the MCP server running via Docker Compose.
-* A GitHub Actions pipeline that builds the MCP image, pushes it to ECR, provisions infrastructure, and
-  smoke-tests via AWS Systems Manager.
-* Documentation for connecting Claude Desktop on macOS and Windows (local stdio or remote HTTP via Smithery).
-* Cost and security guardrails that default to Spot instances and IP-restricted security groups.
-
-## Repository map
+## Repository layout
 
 ```
 .
-├─ infra/                # Terraform + user data for the EC2 stack
-├─ sql/                  # Parameterised SQL templates consumed by the MCP tools
-├─ src/mcp_vertica/      # MCP server implementation
-├─ tests/                # Unit tests and SQL contract checks
-├─ .github/workflows/    # CI/CD pipeline
-├─ Dockerfile.mcp        # Container image for the MCP server
-├─ docker-compose.yml    # Local Vertica CE + MCP developer stack
-├─ Makefile              # Convenience targets (install, lint, test, local-up)
-└─ PROMPTS.md            # Automation prompts for your codex agent
+├─ infra/                      # Terraform + cloud-init user_data
+│  ├─ backend-bootstrap.sh     # Helper for creating S3/DDB backend
+│  ├─ main.tf                  # Security group, IAM, EC2, EBS, outputs
+│  ├─ variables.tf             # Region, instance type, Spot toggle, etc.
+│  ├─ outputs.tf               # MCP URL export
+│  └─ user_data.sh             # Installs Docker, writes compose file, boot
+├─ sql/                        # Parameterised SQL templates (loaded by MCP)
+├─ src/mcp_vertica/            # MCP server package (FastMCP + Vertica tools)
+├─ scripts/wait-for-port.py    # Lightweight TCP wait helper
+├─ docker-compose.yml          # Local Vertica CE + MCP stack
+├─ Dockerfile.mcp              # MCP container image definition
+├─ .github/workflows/deploy.yml# CI → ECR → Terraform → smoke tests
+├─ PROMPTS.md                  # 100+ ready-to-run automation prompts
+└─ README.md                   # This document
 ```
 
-## Local development quickstart
+## Prerequisites
 
-1. **Install prerequisites**
+Populate these GitHub Secrets (`Settings → Secrets and variables → Actions`):
 
-   * Docker Desktop
-   * Python 3.12+
-   * [`uv`](https://github.com/astral-sh/uv) (recommended for dependency management)
+| Name | Type | Purpose |
+| --- | --- | --- |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Secret | Required for pushing to ECR + Terraform provisioning |
+| `AWS_ACCOUNT_ID` | Secret | Used for ECR repo/image tagging |
+| `MCP_HTTP_TOKEN` | Secret (optional) | Enables HTTP auth via `X-Api-Key` |
 
-2. **Sync dependencies and run tests**
+Optional repository variables:
 
+| Name | Default | Description |
+| --- | --- | --- |
+| `VERTICA_IMAGE_URI` | `957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0` | Override Vertica CE image |
+| `ALLOWED_CIDR` | `0.0.0.0/0` | CIDR block allowed through the security group |
+
+> The workflow fails fast if required secrets are missing.
+
+## Local development
+
+1. **Install prerequisites**: Docker Desktop, Python 3.12+, [`uv`](https://github.com/astral-sh/uv).
+2. **Install dependencies & run tests**
    ```bash
    uv sync --frozen
-   uv run pytest -q
    uv run ruff check
+   uv run pytest -q
    ```
-
-3. **Bring up Vertica CE + the MCP server locally**
-
+3. **Launch Vertica CE + MCP locally**
    ```bash
    docker compose up --build -d
-   ./scripts/wait-for-port.py localhost 8000 --timeout 120
+   ./scripts/wait-for-port.py localhost 8000 --timeout 120 --interval 2
    curl http://127.0.0.1:8000/healthz
    ```
-
-   The MCP container exposes port `8000` for HTTP transport and publishes the SSE transport via `uvicorn`.
-
-4. **Launch Claude Desktop (local/stdio)**
-
-   *Open `Settings → Developers → Add MCP server`* and add:
-
+4. **Connect Claude Desktop (stdio)**
    ```json
    {
      "name": "vertica-local",
@@ -64,144 +65,94 @@ Claude to Vertica CE locally and in AWS. It includes:
    }
    ```
 
-   Claude Desktop will launch the server over stdio and automatically expose all registered tools.
+The local stack mirrors the AWS deployment with Vertica CE on port `5433` and MCP HTTP transport on port `8000`.
 
-5. **Smoke test tools**
+## AWS deployment pipeline
 
-   ```bash
-   uv run python -m mcp_vertica --transport http --port 8000
-   curl -H 'Accept: application/json' http://127.0.0.1:8000/api/info
-   ```
+Pushing to `main` runs `.github/workflows/deploy.yml`:
 
-## AWS deployment (Terraform)
+1. **ci** – Installs dependencies via `uv`, runs Ruff + pytest.
+2. **build_and_push_mcp** – Builds `Dockerfile.mcp`, pushes `${AWS_ACCOUNT_ID}.dkr.ecr…/mcp-vertica:${{ github.sha }}` after ensuring the ECR repo exists.
+3. **infra** – Applies Terraform from `infra/` (default `ap-south-1`, `t3.xlarge` Spot, gp3 volume). Outputs are captured to `infra/tfout.json`.
+4. **smoke** – Waits for `/healthz`, then curls `/api/info` using the public DNS from Terraform outputs.
 
-The `infra/` module provisions an Amazon Linux 2023 EC2 instance (default `t3.xlarge`, Spot by default) with:
+### Terraform highlights
 
-* IAM role + instance profile scoped for SSM, CloudWatch, and read-only ECR access
-* Security group allowing Vertica (5433) and MCP HTTP (8000) only from `var.allowed_cidrs`
-* gp3 EBS volume mounted at `/var/lib/vertica`
-* User data that installs Docker, logs into ECR, writes `compose.remote.yml`, and boots Vertica + MCP containers
-* Optional MCP HTTP token enforcement (`var.mcp_http_token`)
+* Default VPC / first subnet in `ap-south-1`.
+* Security group exposes Vertica (5433) and MCP (8000) to `var.allowed_cidrs`.
+* EC2 role with SSM and read-only ECR permissions.
+* Spot capacity (stop-on-interrupt) by default; override via `var.use_spot`.
+* gp3 data volume mounted at `/var/lib/vertica`.
+* `user_data.sh` installs Docker, logs into ECR, writes `compose.remote.yml`, runs Docker Compose, and waits for `/healthz`.
 
-> **Backend state** — Run `infra/backend-bootstrap.sh` once (AWS credentials required) to create the S3 bucket and DynamoDB
-> table referenced in `main.tf`.
+### Outputs
 
-Manual workflow:
+Terraform emits:
 
+* `public_ip`
+* `public_dns`
+* `mcp_http_url = http://<public-dns>:8000`
+
+Use the `mcp_http_url` value when registering the MCP with Claude Desktop (HTTP transport) or Smithery. Include the `X-Api-Key` header if you configured `MCP_HTTP_TOKEN`.
+
+## Security & cost guardrails
+
+* Defaults to a single `t3.xlarge` Spot instance. Set `use_spot=false` or change `instance_type` for stability.
+* gp3 `volume_size_gb=100` – adjust via Terraform variable if datasets are smaller.
+* Security group defaults to `0.0.0.0/0`; narrow this with `ALLOWED_CIDR` or direct Terraform variables.
+* HTTP auth token support via `MCP_HTTP_TOKEN`.
+* `backend-bootstrap.sh` bootstraps S3 + DynamoDB for Terraform state.
+
+Destroy resources when finished:
 ```bash
-cd infra
-aws configure sso # or export AWS credentials / assume role
-./backend-bootstrap.sh
-terraform init -upgrade
-terraform apply -auto-approve \
-  -var="aws_account_id=<your-account-id>" \
-  -var="allowed_cidrs=[\"1.2.3.4/32\"]" \
-  -var="mcp_http_token=<random-string>"
+terraform -chdir=infra destroy -auto-approve
 ```
 
-Outputs expose the instance ID, public IP, and the ECR repository URI. The instance exposes HTTP `:8000` for the MCP server and
-Vertica on `:5433`.
+## SQL templates & tools
 
-To tear down:
+All Vertica SQL lives under `sql/` and is loaded via `SQL.load()`/`SQL.render()`. Only `{schema}` and `{view_bs_to_ci}` substitutions are permitted. The MCP tools cover:
 
-```bash
-terraform destroy -auto-approve
+* Business service CI lookup via events or the `v_bs_to_ci_edges` view
+* Collection discovery and membership for GKE pods/nodes/containers
+* CI facts (node/pod/container/security alerts)
+* Event browsing helpers (`get_event_application`, `get_event_ci`)
+* GKE mapping helpers (`gke_identify_*`)
+* Repeat issue ranking based on duplicate counts, age, and cluster match
+
+Each tool response includes provenance metadata (`sql_or_view`, parameters, row count, `as_of_ts`). The `/healthz` handler lives in `mcp_vertica.health` and is mounted for both HTTP and SSE transports.
+
+## Claude Desktop (remote HTTP)
+
+Example HTTP registration:
+```json
+{
+  "name": "vertica-aws",
+  "type": "http",
+  "url": "http://PUBLIC_DNS:8000",
+  "headers": { "X-Api-Key": "${MCP_HTTP_TOKEN}" },
+  "query": {
+    "host": "vertica",
+    "dbPort": "5433",
+    "database": "vmart",
+    "user": "dbadmin",
+    "password": "password",
+    "ssl": "false",
+    "sslRejectUnauthorized": "false",
+    "connectionLimit": "8"
+  }
+}
 ```
+Replace `PUBLIC_DNS` with the Terraform output. Claude Desktop on macOS and Windows can use this profile directly or through Smithery.
 
-## GitHub Actions pipeline
+## Prompts
 
-`.github/workflows/cicd.yml` orchestrates end-to-end provisioning.
-
-* **Triggers** — `push` to `main` (apply) and manual `workflow_dispatch` (apply or destroy)
-* **Jobs**
-  * `lint-test`: installs dependencies with `uv`, runs Ruff + pytest
-  * `build`: builds `Dockerfile.mcp`, tags images with the git SHA and `latest`, pushes to `${AWS_ACCOUNT_ID}.dkr.ecr…`
-  * `deploy`: bootstraps remote Terraform state, runs `terraform plan/apply`, waits for SSM, and runs smoke tests via `AWS-RunShellScript`
-  * `destroy`: manual workflow path that runs `terraform destroy`
-* **Authentication** — Prefer OIDC + `AWS_ROLE_TO_ASSUME`; the workflow falls back to static `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`
-  when no role is provided. Missing credentials cause an immediate failure with a descriptive error.
-* **Smoke tests** — `curl http://127.0.0.1:8000/healthz`, `docker ps`, and `timeout 5 bash -c 'echo > /dev/tcp/127.0.0.1/5433'` executed via SSM.
-
-Configure these GitHub secrets/variables:
-
-| Name | Type | Notes |
-| ---- | ---- | ----- |
-| `AWS_ACCOUNT_ID` | Secret | Required for ECR tagging |
-| `AWS_ROLE_TO_ASSUME` | Secret | Optional; enables OIDC fast-path |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Secret | Only used if OIDC role absent |
-| `MCP_HTTP_TOKEN` | Secret | Populates `MCP_HTTP_TOKEN` for remote deployments |
-| `VERTICA_IMAGE_URI` | Variable | Override Vertica CE image if needed |
-| `ALLOWED_CIDRS_JSON` | Variable | JSON array (e.g. `["203.0.113.10/32"]`) |
-
-## Claude Desktop (macOS + Windows)
-
-### Local stdio transport
-
-1. Ensure Vertica + MCP are running locally (Docker compose).
-2. In Claude Desktop → *Developers* → *Add MCP server*, add:
-
-   ```json
-   {
-     "name": "vertica-local",
-     "command": ["uvx", "mcp-vertica", "--transport", "stdio"],
-     "workingDirectory": "C:/path/to/repo" // adjust for Windows
-   }
-   ```
-
-3. Restart Claude Desktop. The Vertica tools appear automatically.
-
-### Remote HTTP via Smithery
-
-1. From your laptop (macOS or Windows), ensure your IP is present in `allowed_cidrs` and the MCP HTTP token is set.
-2. Deploy via GitHub Actions or Terraform. Confirm health: `curl -H 'X-API-Key: <token>' http://<public-ip>:8000/healthz`.
-3. Import `smithery.yaml` in [Smithery](https://smithery.ai) and provide the remote endpoint URL
-   (`https://<public-ip>:8000` or behind your own HTTPS proxy).
-4. In Claude Desktop, install the Smithery integration profile. Claude forwards MCP traffic over HTTPS to your remote server.
-
-### Troubleshooting Claude connections
-
-* `401 unauthorized` — Ensure `MCP_HTTP_TOKEN` is set (env variable on the instance) and passed via `X-API-Key`.
-* `connection refused` — Confirm the security group permits your IP and the instance is running.
-* `tool missing` — Check `/tools.json` to verify the MCP server registered your tools; restart the container if necessary.
-
-## Security & operations
-
-* The EC2 security group defaults to `127.0.0.1/32`; set explicit CIDRs before applying.
-* Enabling HTTP auth (`MCP_HTTP_TOKEN`) is strongly recommended whenever `allowed_cidrs` covers non-trivial ranges.
-* `MCP_READ_ONLY=true` disables inserts/updates/DDL regardless of allowlists.
-* Logs: `/var/log/user-data.log`, `/var/log/cloud-init-output.log`, and Docker logs for each container (`docker logs mcp-vertica`).
-* Retrieve connection details quickly: `aws ssm start-session --target <instance-id>` for interactive debugging.
-
-## Cost controls
-
-* `use_spot = true` (default) to leverage EC2 Spot pricing; change to `false` for demos needing interruption resilience.
-* `ebs_size_gb` defaults to `100`; adjust as needed. `gp3` allows later resizing without downtime.
-* Stop the instance when idle to suspend compute charges (`aws ec2 stop-instances`).
-* Run `workflow_dispatch → action: destroy` or `terraform destroy` after demos to remove all resources.
-
-## Observability endpoints
-
-* `GET /healthz` — Primary health check for load balancers / SSM
-* `GET /_alive` — Lightweight TCP probe for faster boot detection
-* `GET /api/info` — Returns version, pool size, and schema allowlists
-* `GET /tools.json` — Snapshot of registered tools and descriptions
-
-## Prompts for your automation agent
-
-`PROMPTS.md` contains 110 production-style prompts grouped by category (infra, CI/CD, MCP, security, etc.) that you can feed into
-Codex-like agents for incremental automation.
+`PROMPTS.md` ships with 102 categorized prompts (infra, Docker, MCP tooling, pipeline, security, troubleshooting, Claude usage). Use them to drive automated refactors or runbooks.
 
 ## Troubleshooting
 
-| Symptom | Resolution |
-| ------- | ---------- |
-| `terraform init` fails with missing bucket | Run `infra/backend-bootstrap.sh` with valid AWS credentials |
-| MCP container exits immediately | Check `/var/log/user-data.log` for environment issues, verify ECR image URIs |
-| Claude Desktop cannot reach remote server | Verify security group, token, and that Smithery is pointing to the HTTPS endpoint |
-| Workflow fails with credential error | Provide `AWS_ROLE_TO_ASSUME` (preferred) or static access keys in repository secrets |
+* Check `/var/log/user-data.log` on the instance (captured by the user-data logger).
+* Use AWS SSM Session Manager (`aws ssm start-session --target <instance-id>`) for interactive debugging.
+* Validate Docker containers: `docker ps`, `docker logs mcp_vertica`, `docker logs vertica_ce`.
+* Verify health: `curl -H 'X-Api-Key: <token>' http://<public-dns>:8000/healthz`.
 
-## Upgrades
-
-* Scale vertically by increasing `instance_type` (e.g. `r6i.2xlarge`) in Terraform or GitHub variables.
-* Promote to ECS/EKS by reusing the MCP container image and referencing the SQL templates packaged in this repository.
-* Extend tools by adding SQL templates under `sql/` and registering new functions in `src/mcp_vertica/mcp.py`.
+Happy querying!

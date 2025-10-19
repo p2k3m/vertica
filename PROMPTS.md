@@ -1,159 +1,128 @@
-# Automation prompts for Vertica MCP
+### Category: Infra/Provisioning (20)
 
-The following prompts are grouped by theme so you can hand them to an automation agent or “codex” to perform incremental tasks.
-They mirror the capabilities implemented in this repository.
+1. "Create a Terraform variable to toggle Spot instances and wire it into `aws_instance.instance_market_options`."
+2. "Add a variable to switch between `t3.xlarge` and `m6i.xlarge` and set a validation rule that memory must be ≥16GB."
+3. "Split security group ingress so ports 5433 and 8000 use the same `allowed_cidrs` list via a dynamic block."
+4. "Output both `public_ip` and `mcp_http_url` from Terraform in JSON for the pipeline."
+5. "Add an `ALLOWED_CIDR` repo variable and flow it into Terraform via `-var` in the workflow."
+6. "Enable SSM Session Manager by attaching `AmazonSSMManagedInstanceCore` to the EC2 role."
+7. "Add a `volume_size_gb` var and map to `ebs_block_device`."
+8. "Pin AMI to `al2023 kernel 6.1 x86_64` and explain why (compatibility with Vertica)."
+9. "Add a toggle to disable public IP for private deployments and show how to reach via SSM port forwarding."
+10. "Expose `instance_id` as an output and document `aws ssm start-session` examples."
+11. "Create a TF local-exec that echoes `docker ps` via SSM to validate container boot."
+12. "Inject `MCP_HTTP_TOKEN` into user_data and enforce header auth in the HTTP app."
+13. "Add CloudWatch agent config to ship `/var/log/user-data.log`."
+14. "Create an IAM policy limited to **read-only** ECR + SSM; no wildcards."
+15. "Set termination protection false; explain how to tear down with `terraform destroy`."
+16. "Parameterise subnet selection via a `subnet_id` var with default = first default subnet."
+17. "Add a secondary EBS volume for WAL and mount at `/var/lib/vertica/wal`."
+18. "Switch `use_spot` to false for demos that require stability."
+19. "Template the compose file with `envsubst` for dynamic DB names."
+20. "Guard user_data with `set -Eeuo pipefail` and log redirection."
 
-## A. Infrastructure / Terraform
+### Category: Docker & Compose (12)
 
-1. Create `infra/main.tf`, `variables.tf`, and `outputs.tf` for a single Vertica EC2 deployment with Spot support.
-2. Add an `aws_ecr_repository` resource named `mcp-vertica` with `force_delete = true`.
-3. Attach an IAM role + instance profile allowing `AmazonSSMManagedInstanceCore` and read-only ECR pulls.
-4. Configure a security group exposing ports 5433 and 8000 only to `var.allowed_cidrs`.
-5. Write `user_data.sh` that installs Docker, mounts `/var/lib/vertica`, and starts Docker Compose.
-6. Add a `use_spot` boolean that toggles `instance_market_options`.
-7. Output the instance public IP, instance ID, and ECR repository URI.
-8. Create `backend-bootstrap.sh` to initialise the Terraform S3 bucket + DynamoDB lock table.
-9. Provide `terraform.tfvars.example` with placeholder CIDRs and account ID.
-10. Lookup the Amazon Linux 2023 AMI via `data "aws_ami"`.
-11. Provision a gp3 EBS volume and attach/mount at `/var/lib/vertica`.
-12. Tag all resources with `var.project`.
+21. "Add `ulimits: nofile: 65536` to Vertica service."
+22. "Make MCP depend on Vertica so health wait is linear."
+23. "Publish only port 8000 on MCP; restrict Vertica to SG allowlist."
+24. "Add a named volume `vertica_data` for local dev."
+25. "Separate `compose.remote.yml` (server) from local compose."
+26. "Parametrise Vertica credentials via `.env`."
+27. "Enable restart policy `unless-stopped` for both services."
+28. "Add healthcheck commands to both services."
+29. "Document how to rotate `MCP_HTTP_TOKEN` without downtime."
+30. "Push the MCP image with tag `${{ github.sha }}` and also `latest`."
 
-## B. GitHub Actions
+### Category: MCP Server & SQL (20)
 
-13. Add `.github/workflows/cicd.yml` with jobs `lint-test`, `build`, `deploy`, and `destroy`.
-14. Fail early if neither `AWS_ROLE_TO_ASSUME` nor static access keys are provided.
-15. Use OIDC via `aws-actions/configure-aws-credentials@v4` when the role is available.
-16. Build `Dockerfile.mcp`, tagging with `${{ github.sha }}` and `latest`.
-17. Login to ECR and push both tags.
-18. Run `infra/backend-bootstrap.sh` inside the workflow.
-19. Execute `terraform init -upgrade` with the remote backend.
-20. Archive the Terraform plan as an artifact.
-21. Apply Terraform automatically on `push` to `main`.
-22. Wait for SSM to report the instance `Online` before smoke testing.
-23. Use `AWS-RunShellScript` to hit `/healthz` and ensure port 5433 is reachable.
-24. Expose a manual `workflow_dispatch` path that triggers `terraform destroy`.
+31. "Load SQL templates with a `sql_loader` and restrict substitutions to `schema`, `view_bs_to_ci`."
+32. "Add `/healthz` route using Starlette that returns `{ok:true}`."
+33. "Ensure `_operation_type` blocks DDL/DML unless allow-listed."
+34. "Return provenance `{sql_or_view, params, as_of_ts, row_count}` for all tools."
+35. "Use `_is_stale` heuristic for CI facts when timestamps are old."
+36. "Add `search_tables`, `search_columns` generic helpers using `v_catalog`."
+37. "Add `execute_query` with strict read-only policy by default."
+38. "Set default `SCHEMA_DEFAULT` from `VERTICA_SCHEMA` env var."
+39. "Expose server version via `mcp._mcp_server.version`."
+40. "Add CORS middleware for HTTP mode with permissive defaults."
 
-## C. Docker & Compose
+### Category: Testing (10)
 
-25. Create `Dockerfile.mcp` that installs dependencies with `uv` and exposes port 8000.
-26. Add a container `HEALTHCHECK` against `http://127.0.0.1:8000/healthz`.
-27. Provide `docker-compose.yml` for local Vertica CE + MCP development.
-28. Persist Vertica data under `./_data/vertica`.
-29. Add `.dockerignore` for build artefacts and local data.
-30. Generate `infra/compose.remote.yml` for the EC2 runtime.
-31. Inject `MCP_HTTP_TOKEN` only in the remote compose file.
-32. Ensure the remote MCP container connects to Vertica using `172.17.0.1:5433`.
+41. "Write a pytest to assert all required SQL files exist."
+42. "Write a test for the `/healthz` handler."
+43. "Mock Vertica cursor to test `_rows_to_dicts`."
+44. "Add a unit test verifying `_operation_type` classification."
+45. "Create a test ensuring `_qual` rejects invalid identifiers."
+46. "Add a contract test that `cis_for_business_service_events.sql` has four `%s` placeholders."
+47. "Add smoke test step to curl `/api/info`."
+48. "Add smoke test step to curl `/healthz`."
+49. "Fail fast CI on ruff lint errors."
+50. "Add CI matrix for Python 3.12 and 3.13."
 
-## D. MCP server code
+### Category: Pipeline (15)
 
-33. Replace inline SQL with `sql_loader.load_sql()`.
-34. Add `AuthMiddleware` enforcing `MCP_HTTP_TOKEN` when set.
-35. Implement `/healthz`, returning `{"status": "ok"}`.
-36. Keep SSE transport available for local development (`run_sse`).
-37. Keep HTTP transport for server mode (`run_http`).
-38. Log parameter tuples at debug level instead of full SQL strings.
-39. Sanitize identifiers and only format table names, never parameters.
-40. Enforce per-schema allowlists driven by environment variables.
-41. Implement `_is_stale` handling ISO timestamps and Unix epochs.
-42. Block DDL/DML unless allowed by schema or global permissions.
-43. Return provenance metadata with every tool response.
-44. Add pagination via `LIMIT %s` to list-style queries.
-45. Emit error payloads with provenance fallback (`row_count = 0`).
-46. Configure CORS via `ALLOWED_ORIGINS`.
+51. "Validate secrets at the start of the workflow and exit with clear errors."
+52. "Use `aws-actions/amazon-ecr-login@v2` to simplify ECR login."
+53. "Auto-create ECR repo if missing."
+54. "Pass `MCP_HTTP_TOKEN` into Terraform as `TF_VAR_mcp_http_token`."
+55. "Emit TF outputs to JSON and export to GITHUB_ENV."
+56. "Add a dependent job `smoke` that waits for `/healthz`."
+57. "Cache `~/.cache/uv` between runs for faster builds."
+58. "Add concurrency group to prevent parallel applies."
+59. "Trigger only on `main` pushes; add `workflow_dispatch` for manual."
+60. "Add environment protection rules for `prod` branch."
 
-## E. SQL files
+### Category: Cost & Ops (12)
 
-47. Create `get_event_application.sql` for distinct applications.
-48. Create `cis_for_business_service_events.sql` joining CI tables.
-49. Add `collection_for_ci.sql` unioning pod/node/container collections.
-50. Provide `collection_members_nodes.sql`.
-51. Provide `collection_members_pods.sql`.
-52. Provide `collection_members_containers.sql`.
-53. Provide `ci_facts_node.sql`.
-54. Provide `ci_facts_pod.sql`.
-55. Provide `ci_facts_container.sql`.
-56. Provide `security_alerts_last7d.sql`.
-57. Provide `search_tables.sql`.
-58. Provide `search_columns.sql`.
-59. Provide `list_views.sql`.
-60. Provide `list_indexes.sql`.
-61. Provide `get_event_ci.sql`.
+61. "Default to Spot; stop on interruption to preserve EBS data."
+62. "Expose a `disable_public_ip` var to force SSM-only access."
+63. "Document how to `terraform destroy` to avoid zombie costs."
+64. "Set `volume_type=gp3` with modest IOPS; bump only if needed."
+65. "Use `t3.xlarge` baseline credits; monitor `CPUCreditBalance`."
+66. "Restrict SG ingress to a `/32` when demoing from a fixed IP."
+67. "Use `aws budgets` CLI to create a small budget with alert."
+68. "Stop instance overnight with an EventBridge schedule (optional)."
+69. "Prefer single-AZ to avoid cross-AZ data charges."
+70. "Keep CloudWatch logs basic; avoid retention >7 days for POC."
 
-## F. Testing
+### Category: Troubleshooting (13)
 
-62. Add `tests/test_utils.py` covering `_sanitize_ident`, `_qual`, and `_is_stale`.
-63. Add `tests/test_sql_exists.py` ensuring SQL templates are present and non-empty.
-64. Ensure the MCP module imports successfully under pytest.
-65. Configure `pytest.ini` to silence irrelevant deprecation warnings.
-66. Add `ruff.toml` with repository lint rules.
-67. Fail the CI pipeline if Ruff reports issues.
-68. Guard against dangerous SQL by checking for `;--` patterns in tests or CI.
-69. Provide a stub test demonstrating `execute_query("SELECT 1")` using a fake manager.
-70. Skip database-dependent tests when Vertica env vars are missing.
-71. Upload pytest results as workflow artifacts.
+71. "Check `/var/log/user-data.log` when containers don’t start."
+72. "Run `docker logs mcp_vertica` and `docker logs vertica_ce` via SSM."
+73. "Verify ECR cross-account permissions if the Vertica image fails to pull."
+74. "Ensure AMI is **x86_64** if the image is built for Intel."
+75. "Increase `instance_type` if Vertica OOMs (m6i.xlarge)."
+76. "Open SG port 8000 to your IP if health checks fail from GitHub."
+77. "Use `curl http://127.0.0.1:8000/api/info` on the instance to isolate SG issues."
+78. "Confirm mount `/var/lib/vertica` is present and writable."
+79. "Check `VERTICA_*` envs in the MCP container."
+80. "Validate SQL files load by enabling debug logs in `sql_loader`."
+81. "Run `terraform taint aws_instance.mcp` to force re-provision."
+82. "Clear Docker cache: `docker system prune -a` if disk fills."
 
-## G. Smoke / SSM
+### Category: Claude Desktop usage (12)
 
-72. Run `curl -fsS http://127.0.0.1:8000/healthz` via SSM.
-73. Verify `docker ps` shows both containers.
-74. Check port 5433 with `timeout 5 bash -c 'echo > /dev/tcp/127.0.0.1/5433'`.
-75. Optionally run `vsql -U dbadmin -d VMart -c "select 1"` if available.
-76. Collect `/var/log/cloud-init-output.log` via SSM when failures occur.
-77. Fail the pipeline if any smoke command fails.
+83. "Register the HTTP MCP at `http://<dns>:8000` with header `X-Api-Key`."
+84. "Switch to stdio transport on macOS with `uvx mcp-vertica --transport stdio`."
+85. "Pass DB params via query string: `?host=vertica&dbPort=5433&database=vmart&user=dbadmin&password=password`."
+86. "Call `get_event_application(limit=10)` to list apps."
+87. "Pivot to `cis_for_business_service(bs_name='Checkout')`."
+88. "Resolve a pod’s cluster: `gke_identify_pod_cluster('POD_ID')`."
+89. "List collection members: `collection_members('CLUSTER')`."
+90. "Show CI facts: `ci_facts(ci_id='CI123', fact_keys=['compute_status','zone'])`."
+91. "Search tables: `search_tables('gke')`."
+92. "Search columns: `search_columns('cmdb_id')`."
+93. "Run a controlled `execute_query('SELECT 1')` as a sanity check."
+94. "Fetch event CIs: `get_event_ci(limit=20)`."
 
-## H. Security
+### Category: Security (8)
 
-78. Fail the workflow if `allowed_cidrs` includes `0.0.0.0/0` and `MCP_HTTP_TOKEN` is empty.
-79. Generate a random `MCP_HTTP_TOKEN` during manual dispatch when the secret is absent.
-80. Ensure the EC2 role only has ECR pull permissions.
-81. Pin GitHub Actions versions (no `@main`).
-82. Pin `python:3.12-slim` by digest in the Dockerfile.
-83. Run containers as non-root.
-
-## I. Observability
-
-84. Add `/api/info` reporting server version, pool size, and schema allowlists.
-85. Emit connection pool metrics every 60 seconds.
-86. Upload recent Docker logs as artifacts when jobs fail.
-87. Grab EC2 console output on failure for debugging.
-88. Document how to store database credentials in SSM Parameter Store for future use.
-
-## J. Developer experience
-
-89. Provide `Makefile` targets (`install`, `test`, `fmt`, `lint`, `local-up`, `local-down`, `destroy`).
-90. Add `.vscode/launch.json` for debugging the MCP server locally.
-91. Offer an `uvx mcp-vertica --stdio` command reference for Claude Desktop.
-92. Add `scripts/seed_itsm.py` wiring for optional demo schema (already present).
-93. Ship `scripts/wait-for-port.py` to manage container boot order.
-94. Keep `smithery.yaml` pointing to the MCP HTTP endpoint.
-
-## K. Claude Desktop enablement
-
-95. Document Claude Desktop stdio setup with command JSON snippets.
-96. Document Smithery remote configuration for HTTP MCP.
-97. Provide macOS and Windows commands for launching the server locally.
-98. Include troubleshooting notes for failed server launches.
-99. Link to FastMCP’s HTTP mode documentation.
-
-## L. FinOps & sizing
-
-100. Document the Spot toggle and how to switch to On-Demand.
-101. Show how to resize the EBS volume safely.
-102. List instance type recommendations (why 16 GiB RAM helps Vertica).
-103. Explain why there is no NAT/ALB in this footprint.
-104. Suggest stopping the instance daily when idle.
-105. Document the `workflow_dispatch: destroy` path.
-
-## M. Extra polish
-
-106. Add `X-Request-Id` headers and log them server-side.
-107. Include `server_time_utc` in provenance payloads.
-108. Allow a `schema` override parameter for demo scenarios.
-109. Return HTTP 429 when too many concurrent queries are running.
-110. Honour `MCP_READ_ONLY` env to disable DDL/DML regardless of allowlists.
-111. Offer CSV responses when clients send `Accept: text/csv`.
-112. Publish a `/tools.json` endpoint listing tool names and descriptions.
-113. Provide a lightweight `/_alive` TCP probe endpoint.
-114. Expose `make fmt` running `ruff --fix`.
-115. Document the ECS/EKS upgrade path.
-
+95. "Use `MCP_HTTP_TOKEN` and check for the header in a simple Starlette middleware."
+96. "Restrict SG to your `/32` when demoing to executives."
+97. "Do **not** open SSH; use SSM only."
+98. "Avoid storing secrets in the repo; use Actions secrets."
+99. "Pin Docker base image to `python:3.12-slim` and update monthly."
+100. "Run the MCP container as a non-root user."
+101. "Set `VERTICA_SSL=false` for POC; document enabling TLS later."
+102. "Add `X-Frame-Options: DENY` and `X-Content-Type-Options: nosniff` headers via middleware (optional)."

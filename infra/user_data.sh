@@ -1,46 +1,66 @@
-#!/bin/bash
-set -euxo pipefail
+#!/usr/bin/env bash
+set -Eeuo pipefail
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
-REGION="${region}"
-ACCOUNT_ID="${aws_account_id}"
-VERTICA_IMAGE_URI="${vertica_image_uri}"
-MCP_IMAGE_URI="${mcp_image_uri}"
-MCP_HTTP_TOKEN="${mcp_http_token}"
+REGION="ap-south-1"
+VERTICA_IMAGE_URI="${VERTICA_IMAGE_URI}"
+MCP_IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${MCP_IMAGE_REPO}:${MCP_IMAGE_TAG}"
+MCP_HTTP_TOKEN="${MCP_HTTP_TOKEN}"
 
-exec 1>>/var/log/user-data.log 2>&1
-
+# 1) Install basics
 dnf update -y
+amazon-linux-extras enable docker
+dnf install -y docker jq
+systemctl enable --now docker
 
-dnf install -y docker docker-compose-plugin jq awscli
-systemctl enable docker
-systemctl start docker
+# 2) ECR login(s)
+aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com || true
+aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin 957650740525.dkr.ecr.${REGION}.amazonaws.com || true
 
-mkfs -t xfs /dev/xvdf || true
+# 3) Mount data volume
+mkfs -t ext4 /dev/sdh || true
 mkdir -p /var/lib/vertica
-if ! mount | grep -q '/var/lib/vertica'; then
-  mount /dev/xvdf /var/lib/vertica
-fi
-grep -q '/var/lib/vertica' /etc/fstab || echo '/dev/xvdf /var/lib/vertica xfs defaults,nofail 0 2' >> /etc/fstab
+mount /dev/sdh /var/lib/vertica || true
+echo "/dev/sdh /var/lib/vertica ext4 defaults,nofail 0 2" >> /etc/fstab
 
-aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
-
-mkdir -p /opt/mcp
-cat >/opt/mcp/compose.remote.yml <<'YAML'
-${compose_yaml}
+# 4) Write compose file
+cat >/opt/compose.remote.yml <<'YAML'
+version: "3.9"
+services:
+  vertica:
+    image: "${VERTICA_IMAGE_URI}"
+    container_name: vertica_ce
+    ports: ["5433:5433"]
+    volumes: ["/var/lib/vertica:/data"]
+    ulimits: { nofile: 65536 }
+    restart: unless-stopped
+  mcp:
+    image: "${MCP_IMAGE_URI}"
+    container_name: mcp_vertica
+    environment:
+      VERTICA_HOST: vertica
+      VERTICA_PORT: "5433"
+      VERTICA_DATABASE: "vmart"
+      VERTICA_USER: "dbadmin"
+      VERTICA_PASSWORD: "password"
+      VERTICA_SSL: "false"
+      VERTICA_SSL_REJECT_UNAUTHORIZED: "false"
+      VERTICA_CONNECTION_LIMIT: "8"
+      VERTICA_SCHEMA: "mf_shared_provider_default"
+      VIEW_BS_TO_CI: "v_bs_to_ci_edges"
+      MCP_HTTP_TOKEN: "${MCP_HTTP_TOKEN}"
+    ports: ["8000:8000"]
+    depends_on: [vertica]
+    restart: unless-stopped
 YAML
 
-cat >/opt/mcp/.env <<'ENV'
-VERTICA_IMAGE_URI=${vertica_image_uri}
-MCP_IMAGE_URI=${mcp_image_uri}
-MCP_HTTP_TOKEN=${mcp_http_token}
-ENV
+# 5) Boot
+cd /opt
+docker compose -f compose.remote.yml up -d
 
-cd /opt/mcp
-docker compose --env-file /opt/mcp/.env -f /opt/mcp/compose.remote.yml up -d
-
-for i in {1..40}; do
-  if curl -fsS http://127.0.0.1:8000/healthz; then
-    break
-  fi
+# 6) Health wait
+for i in {1..60}; do
+  if curl -sf http://127.0.0.1:8000/healthz >/dev/null; then echo ready; exit 0; fi
   sleep 5
 done
+exit 1
