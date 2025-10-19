@@ -39,13 +39,19 @@ def set_component_status(
     """Record health information for a named component."""
 
     with _COMPONENT_LOCK:
-        _COMPONENTS[name] = {
+        component_state = {
             "ready": ready,
             "attempts": attempts,
             "last_error": last_error,
             "last_attempt_utc": last_attempt_utc,
             "ready_since_utc": ready_since_utc,
         }
+        _COMPONENTS[name] = component_state
+
+    logger.debug(
+        "Recorded health component state",
+        extra={"component": name, "state": component_state},
+    )
 
 
 def reset_health_state() -> None:
@@ -66,6 +72,17 @@ async def healthz(request: Request) -> JSONResponse:
         "on",
     }
     status_code = 200 if payload["ok"] or not require_ready else 503
-    if not payload["ok"] and status_code >= 400:
-        logger.warning("healthz failing", extra={"components": payload["components"]})
+    if not payload["ok"]:
+        log_level = logging.WARNING if status_code >= 400 else logging.INFO
+        logger.log(
+            log_level,
+            "healthz degraded",
+            extra={
+                "components": payload["components"],
+                "require_ready": require_ready,
+                "status_code": status_code,
+            },
+        )
+    else:
+        logger.debug("healthz ok", extra={"components": payload["components"]})
     return JSONResponse(payload, status_code=status_code)
