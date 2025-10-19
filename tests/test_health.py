@@ -54,7 +54,32 @@ def test_healthz_bypasses_auth(monkeypatch):
     assert response.json() == {"ok": True, "components": {}}
 
 
-def test_healthz_reports_component_failure():
+def test_healthz_degraded_returns_200():
+    set_component_status(
+        "vertica",
+        ready=False,
+        attempts=3,
+        last_error="RuntimeError: boom",
+        last_attempt_utc="2024-01-01T00:00:00Z",
+        ready_since_utc=None,
+    )
+    response = asyncio.run(healthz(DummyRequest()))
+    assert response.status_code == 200
+    payload = json.loads(response.body.decode("utf-8"))
+    assert payload["ok"] is False
+    assert payload["components"] == {
+        "vertica": {
+            "ready": False,
+            "attempts": 3,
+            "last_error": "RuntimeError: boom",
+            "last_attempt_utc": "2024-01-01T00:00:00Z",
+            "ready_since_utc": None,
+        }
+    }
+
+
+def test_healthz_reports_component_failure(monkeypatch):
+    monkeypatch.setenv("MCP_HEALTH_REQUIRE_READY", "1")
     set_component_status(
         "vertica",
         ready=False,
