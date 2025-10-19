@@ -1,12 +1,20 @@
 terraform {
   required_version = ">= 1.6.0"
 }
-provider "aws" { region = var.region }
 
-data "aws_vpc" "default" { default = true }
+provider "aws" {
+  region = var.region
+}
+
+data "aws_vpc" "default" {
+  default = true
+}
 
 data "aws_subnets" "default" {
-  filter { name = "vpc-id" values = [data.aws_vpc.default.id] }
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
 }
 
 resource "aws_security_group" "mcp" {
@@ -66,18 +74,28 @@ resource "aws_iam_role_policy_attachment" "ecr_attach" {
   role       = aws_iam_role.ec2.name
   policy_arn = aws_iam_policy.ecr_read.arn
 }
-resource "aws_iam_instance_profile" "ec2" { name = "vertica-mcp-profile" role = aws_iam_role.ec2.name }
+resource "aws_iam_instance_profile" "ec2" {
+  name = "vertica-mcp-profile"
+  role = aws_iam_role.ec2.name
+}
 
-resource "tls_private_key" "this" { algorithm = "RSA" rsa_bits = 2048 }
+resource "tls_private_key" "this" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
 resource "aws_key_pair" "this" {
   key_name   = "vertica-mcp-key"
   public_key = tls_private_key.this.public_key_openssh
 }
 
 data "aws_ami" "al2023" {
-  owners = ["137112412989"]
+  owners      = ["137112412989"]
   most_recent = true
-  filter { name = "name" values = ["al2023-ami-*-kernel-6.1-x86_64"] }
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-*-kernel-6.1-x86_64"]
+  }
 }
 
 resource "aws_instance" "mcp" {
@@ -95,19 +113,31 @@ resource "aws_instance" "mcp" {
     MCP_HTTP_TOKEN    = var.mcp_http_token
   })
 
-  capacity_reservation_specification { capacity_reservation_preference = "open" }
+  capacity_reservation_specification {
+    capacity_reservation_preference = "open"
+  }
 
   dynamic "instance_market_options" {
     for_each = var.use_spot ? [1] : []
     content {
       market_type = "spot"
-      spot_options { instance_interruption_behavior = "stop" }
+      spot_options {
+        instance_interruption_behavior = "stop"
+      }
     }
   }
 
-  root_block_device { volume_size = 20 volume_type = "gp3" }
+  root_block_device {
+    volume_size = 20
+    volume_type = "gp3"
+  }
 
-  ebs_block_device { device_name = "/dev/sdh" volume_size = var.volume_size_gb volume_type = "gp3" delete_on_termination = true }
+  ebs_block_device {
+    device_name           = "/dev/sdh"
+    volume_size           = var.volume_size_gb
+    volume_type           = "gp3"
+    delete_on_termination = true
+  }
 
   tags = { Name = "vertica-mcp" }
 
