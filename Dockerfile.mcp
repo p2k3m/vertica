@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN pip install --no-cache-dir uv
 COPY pyproject.toml uv.lock ./
-RUN uv export --no-dev --frozen --format requirements.txt --output requirements.lock && \
+RUN uv export --no-dev --frozen --format requirements.txt --output-file requirements.lock && \
     uv pip sync --system requirements.lock
 
 COPY src ./src
