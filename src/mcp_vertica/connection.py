@@ -125,10 +125,13 @@ class VerticaConnectionPool:
         self._checked_out: set[vertica_python.Connection] = set()
         self._lock = threading.Lock()
         self._shutdown = threading.Event()
+        self._current_size = 0
         self._metrics_thread = threading.Thread(
             target=self._emit_metrics, name="vertica-pool-metrics", daemon=True
         )
-        self._initialize_pool()
+        logger.info(
+            "configured-vertica-pool", extra={"limit": self._config.connection_limit, "host": self._config.host}
+        )
         self._metrics_thread.start()
 
     def _emit_metrics(self) -> None:
@@ -161,19 +164,29 @@ class VerticaConnectionPool:
             cfg["ssl"] = False
         return cfg
 
-    def _initialize_pool(self) -> None:
-        logger.info(
-            "initializing-vertica-pool", extra={"limit": self._config.connection_limit, "host": self._config.host}
-        )
-        for _ in range(self._config.connection_limit):
+    def _try_create_connection(self) -> vertica_python.Connection | None:
+        with self._lock:
+            if self._current_size >= self._config.connection_limit:
+                return None
+            self._current_size += 1
+        try:
             conn = vertica_python.connect(**self._get_connection_kwargs())
-            self._pool.put(conn)
+        except Exception:
+            with self._lock:
+                self._current_size -= 1
+            raise
+        return conn
 
     def acquire(self, timeout: float = 30.0) -> vertica_python.Connection:
         try:
-            conn = self._pool.get(timeout=timeout)
-        except queue.Empty as exc:  # pragma: no cover - defensive
-            raise TimeoutError("Timed out waiting for a Vertica connection") from exc
+            conn = self._pool.get_nowait()
+        except queue.Empty:
+            conn = self._try_create_connection()
+            if conn is None:
+                try:
+                    conn = self._pool.get(timeout=timeout)
+                except queue.Empty as exc:  # pragma: no cover - defensive
+                    raise TimeoutError("Timed out waiting for a Vertica connection") from exc
         with self._lock:
             self._checked_out.add(conn)
         return conn
@@ -184,12 +197,19 @@ class VerticaConnectionPool:
                 logger.warning("Ignoring release of unmanaged connection")
                 return
             self._checked_out.remove(conn)
+        if conn.closed():
+            with self._lock:
+                self._current_size = max(0, self._current_size - 1)
+            with contextlib.suppress(Exception):
+                conn.close()
+            return
         try:
-            if conn.closed():
-                conn = vertica_python.connect(**self._get_connection_kwargs())
             self._pool.put(conn, block=False)
         except queue.Full:  # pragma: no cover - defensive
-            conn.close()
+            with contextlib.suppress(Exception):
+                conn.close()
+            with self._lock:
+                self._current_size = max(0, self._current_size - 1)
 
     def close_all(self) -> None:
         self._shutdown.set()
@@ -204,6 +224,7 @@ class VerticaConnectionPool:
             with contextlib.suppress(Exception):
                 conn.close()
         self._checked_out.clear()
+        self._current_size = 0
 
 
 class VerticaConnectionManager:
