@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
-REGION="ap-south-1"
+REGION="${REGION}"
 VERTICA_IMAGE_URI="${VERTICA_IMAGE_URI}"
 MCP_IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${MCP_IMAGE_REPO}:${MCP_IMAGE_TAG}"
 MCP_HTTP_TOKEN="${MCP_HTTP_TOKEN}"
