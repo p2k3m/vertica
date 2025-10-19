@@ -133,18 +133,18 @@ jobs:
       - name: Render terraform variables
         working-directory: infra
         run: |
-          printf '%s\n' \
-            "project         = \"${{ vars.PROJECT || 'vertica-mcp' }}\"" \
-            "region          = \"${{ env.AWS_REGION }}\"" \
-            "allowed_cidrs   = ${{ vars.ALLOWED_CIDRS_JSON || '[\"127.0.0.1/32\"]' }}" \
-            "aws_account_id  = \"${{ secrets.AWS_ACCOUNT_ID }}\"" \
-            "vertica_image_uri = \"${{ vars.VERTICA_IMAGE_URI || '957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0' }}\"" \
-            "mcp_image_repo    = \"${{ vars.MCP_IMAGE_REPO || 'mcp-vertica' }}\"" \
-            "mcp_http_token    = \"${{ secrets.MCP_HTTP_TOKEN }}\"" \
-            "use_spot          = ${{ vars.USE_SPOT || 'true' }}" \
-            "ebs_size_gb       = ${{ vars.EBS_SIZE_GB || '100' }}" \
-            "instance_type     = \"${{ vars.INSTANCE_TYPE || 't3.xlarge' }}\"" \
-            > terraform.auto.tfvars
+          cat <<'EOF' > terraform.auto.tfvars
+          project         = "${{ vars.PROJECT || 'vertica-mcp' }}"
+          region          = "${{ env.AWS_REGION }}"
+          allowed_cidrs   = ${{ vars.ALLOWED_CIDRS_JSON || '["127.0.0.1/32"]' }}
+          aws_account_id  = "${{ secrets.AWS_ACCOUNT_ID }}"
+          vertica_image_uri = "${{ vars.VERTICA_IMAGE_URI || '957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0' }}"
+          mcp_image_repo    = "${{ vars.MCP_IMAGE_REPO || 'mcp-vertica' }}"
+          mcp_http_token    = "${{ secrets.MCP_HTTP_TOKEN }}"
+          use_spot          = ${{ vars.USE_SPOT || 'true' }}
+          ebs_size_gb       = ${{ vars.EBS_SIZE_GB || '100' }}
+          instance_type     = "${{ vars.INSTANCE_TYPE || 't3.xlarge' }}"
+          EOF
       - name: Terraform init
         working-directory: infra
         run: terraform init -upgrade
