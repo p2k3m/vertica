@@ -1,212 +1,144 @@
-name: Deploy Vertica + MCP to AWS
-
+name: vertica-mcp-cicd
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: apply or destroy
+        default: apply
+        type: choice
+        options: [apply, destroy]
 
 env:
-  AWS_REGION: ap-south-1
-  VERTICA_IMAGE_URI: ${{ vars.VERTICA_IMAGE_URI || '957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0' }}
-  MCP_IMAGE_REPO: mcp-vertica
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  VERTICA_IMAGE_URI: ${{ secrets.VERTICA_IMAGE_URI }}
+  VERTICA_USER: ${{ secrets.VERTICA_USER }}
+  VERTICA_PASSWORD: ${{ secrets.VERTICA_PASSWORD }}
+  VERTICA_DATABASE: ${{ secrets.VERTICA_DATABASE }}
+  MCP_HTTP_TOKEN: ${{ secrets.MCP_HTTP_TOKEN }}
+  ALLOWED_CIDRS: ${{ secrets.ALLOWED_CIDRS }}
 
 jobs:
-  ci:
+  preflight:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync --frozen
-      - run: uv run ruff check
-      - run: uv run pytest -q
-
-  build_and_push_mcp:
-    needs: ci
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Fail fast if secrets missing
+      - name: Check required secrets
         run: |
-          : "${{ secrets.AWS_ACCESS_KEY_ID }}" || { echo 'Missing AWS_ACCESS_KEY_ID'; exit 1; }
-          : "${{ secrets.AWS_SECRET_ACCESS_KEY }}" || { echo 'Missing AWS_SECRET_ACCESS_KEY'; exit 1; }
-          : "${{ secrets.AWS_ACCOUNT_ID }}" || { echo 'Missing AWS_ACCOUNT_ID'; exit 1; }
-      - name: Configure AWS creds
+          req=(AWS_REGION AWS_ACCOUNT_ID ALLOWED_CIDRS VERTICA_IMAGE_URI VERTICA_USER VERTICA_PASSWORD VERTICA_DATABASE MCP_HTTP_TOKEN)
+          for k in "${req[@]}"; do
+            if [ -z "${!k}" ]; then echo "❌ Missing secret: $k"; exit 1; fi
+          done
+          echo "✅ Secrets OK"
+
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+      - name: Install deps
+        run: uv sync --frozen
+      - name: Ruff + pytest
+        run: |
+          uv run python -V
+          uv run -m pip install ruff
+          uv run ruff check
+          uv run pytest -q
+
+  build:
+    needs: [preflight, lint-test]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS (OIDC preferred)
         uses: aws-actions/configure-aws-credentials@v4
         with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          audience: sts.amazonaws.com
       - name: Login to ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Ensure ECR repo exists
+      - name: Ensure MCP ECR repo exists
         run: |
-          aws ecr describe-repositories --repository-names "$MCP_IMAGE_REPO" || \
-          aws ecr create-repository --repository-name "$MCP_IMAGE_REPO" >/dev/null
-      - name: Build & push MCP image
+          aws ecr describe-repositories --repository-names mcp-vertica >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name mcp-vertica >/dev/null
+      - name: Build + push MCP image
         run: |
-          IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/${MCP_IMAGE_REPO}:${{ github.sha }}"
-          docker build -f Dockerfile.mcp -t "$IMAGE_URI" .
-          docker push "$IMAGE_URI"
-          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+          REPO=${{ steps.ecr.outputs.registry }}/mcp-vertica
+          docker build -f Dockerfile.mcp -t $REPO:latest -t $REPO:${{ github.sha }} .
+          docker push $REPO:latest
+          docker push $REPO:${{ github.sha }}
+      - name: Export repo URL
+        run: echo "ECR_MCP_REPO=${{ steps.ecr.outputs.registry }}/mcp-vertica" >> $GITHUB_ENV
 
-  infra:
-    needs: build_and_push_mcp
+  deploy:
+    needs: build
     runs-on: ubuntu-latest
-    env:
-      TF_IN_AUTOMATION: 1
     steps:
       - uses: actions/checkout@v4
-      - name: Configure AWS creds
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v3
-        with: { terraform_version: 1.9.8 }
+      - name: Backend bootstrap
+        working-directory: infra
+        run: bash backend-bootstrap.sh
       - name: Terraform init
         working-directory: infra
-        run: terraform init -upgrade
-      - name: Terraform apply
+        run: |
+          terraform -version || (curl -s https://releases.hashicorp.com/terraform/1.9.8/terraform_1.9.8_linux_amd64.zip -o tf.zip && sudo unzip -o tf.zip -d /usr/local/bin)
+          terraform init -upgrade
+      - name: Terraform apply/destroy
+        if: ${{ github.event.inputs.action != 'destroy' }}
         working-directory: infra
         env:
-          TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
-          TF_VAR_vertica_image_uri: ${{ env.VERTICA_IMAGE_URI }}
-          TF_VAR_mcp_image_repo: ${{ env.MCP_IMAGE_REPO }}
-          TF_VAR_mcp_image_tag: ${{ github.sha }}
-          TF_VAR_mcp_http_token: ${{ secrets.MCP_HTTP_TOKEN }}
+          TF_VAR_tf_backend_bucket: ${{ env.TF_BACKEND_BUCKET }}
+          TF_VAR_tf_backend_ddb_table: ${{ env.TF_BACKEND_DDB_TABLE }}
         run: |
           terraform apply -auto-approve \
-            -var "allowed_cidrs=[\"${{ vars.ALLOWED_CIDR || '0.0.0.0/0' }}\"]"
-      - name: Export outputs
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="aws_account_id=${{ env.AWS_ACCOUNT_ID }}" \
+            -var="allowed_cidrs=[${{ env.ALLOWED_CIDRS }}]" \
+            -var="vertica_image_uri=${{ env.VERTICA_IMAGE_URI }}" \
+            -var="mcp_http_token=${{ env.MCP_HTTP_TOKEN }}" \
+            -var="vertica_user=${{ env.VERTICA_USER }}" \
+            -var="vertica_password=${{ env.VERTICA_PASSWORD }}" \
+            -var="vertica_database=${{ env.VERTICA_DATABASE }}" \
+            -var="ttl_hours=8"
+      - name: Terraform destroy
+        if: ${{ github.event.inputs.action == 'destroy' }}
+        working-directory: infra
+        env:
+          TF_VAR_tf_backend_bucket: ${{ env.TF_BACKEND_BUCKET }}
+          TF_VAR_tf_backend_ddb_table: ${{ env.TF_BACKEND_DDB_TABLE }}
+          TF_VAR_aws_region: ${{ env.AWS_REGION }}
+          TF_VAR_aws_account_id: ${{ env.AWS_ACCOUNT_ID }}
+        run: terraform destroy -auto-approve
+      - name: Capture outputs
+        if: ${{ github.event.inputs.action != 'destroy' }}
         id: tfout
         working-directory: infra
         run: |
-          terraform output -json > tfout.json
-          cat tfout.json
-      - name: Upload Terraform outputs
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-outputs
-          path: infra/tfout.json
-
-  smoke:
-    needs: infra
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Download Terraform outputs
-        uses: actions/download-artifact@v4
-        with:
-          name: terraform-outputs
-          path: infra
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-      - name: Read outputs
+          echo "ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
+          echo "mcp=$(terraform output -raw mcp_url)" >> $GITHUB_OUTPUT
+          echo "vertica=$(terraform output -raw vertica_address)" >> $GITHUB_OUTPUT
+      - name: Wait for SSM + smoke test
+        if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
-          MCP_URL=$(jq -r .mcp_http_url.value infra/tfout.json)
-          echo "MCP_URL=$MCP_URL" >> $GITHUB_ENV
-          INSTANCE_ID=$(jq -r .instance_id.value infra/tfout.json)
-          echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
-      - name: Wait for health
-        id: wait_for_health
-        continue-on-error: true
+          INST_ID=$(aws ec2 describe-instances --filters "Name=tag:Name,Values=vertica-mcp" "Name=instance-state-name,Values=running" \
+            --query 'Reservations[0].Instances[0].InstanceId' --output text)
+          bash scripts/ssm_smoke.sh "$INST_ID" "${{ env.MCP_HTTP_TOKEN }}"
+      - name: Summary
+        if: ${{ github.event.inputs.action != 'destroy' }}
         run: |
-          set -Eeuo pipefail
-          echo "Checking $MCP_URL/healthz"
-          for i in $(seq 1 60); do
-            if curl -sf "$MCP_URL/healthz"; then
-              echo "health_ready=true" >>"$GITHUB_OUTPUT"
-              exit 0
-            fi
-            echo "Attempt $i/60 failed; retrying in 5s" >&2
-            sleep 5
-          done
-          echo "health_ready=false" >>"$GITHUB_OUTPUT"
-          exit 1
-      - name: Info endpoint
-        if: ${{ steps.wait_for_health.outcome == 'success' }}
-        run: curl -s "$MCP_URL/api/info" | jq .
-      - name: Collect remote logs
-        if: ${{ always() }}
-        continue-on-error: true
-        env:
-          INSTANCE_ID: ${{ env.INSTANCE_ID }}
-        run: |
-          set -u
-          LOG_DIR="remote-logs"
-          mkdir -p "$LOG_DIR"
-          if [[ -z "${INSTANCE_ID:-}" || "$INSTANCE_ID" == "null" ]]; then
-            echo "INSTANCE_ID is not available; skipping log collection"
-            exit 0
-          fi
-
-          run_cmd() {
-            local name="$1"
-            shift
-            local command="$*"
-            echo "::group::Collecting $name"
-            local command_id
-            if ! command_id=$(aws ssm send-command \
-              --instance-ids "$INSTANCE_ID" \
-              --document-name "AWS-RunShellScript" \
-              --comment "Fetch $name" \
-              --parameters commands="$command" \
-              --query 'Command.CommandId' \
-              --output text); then
-              echo "Failed to start SSM command for $name" >&2
-              echo "::endgroup::"
-              return 0
-            fi
-
-            aws ssm wait command-executed --instance-id "$INSTANCE_ID" --command-id "$command_id" || true
-
-            local stdout_file="$LOG_DIR/${name}.log"
-            local stderr_file="$LOG_DIR/${name}.err.log"
-            local status_file="$LOG_DIR/${name}.status"
-            aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
-              --query 'StandardOutputContent' --output text >"$stdout_file" || true
-            aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
-              --query 'StandardErrorContent' --output text >"$stderr_file" || true
-            aws ssm get-command-invocation --instance-id "$INSTANCE_ID" --command-id "$command_id" \
-              --query 'Status' --output text >"$status_file" || true
-
-            if [[ -s "$stdout_file" ]]; then
-              echo "--- $name stdout ---"
-              cat "$stdout_file"
-            else
-              echo "--- $name stdout (empty) ---"
-            fi
-
-            if [[ -s "$stderr_file" ]]; then
-              echo "--- $name stderr ---" >&2
-              cat "$stderr_file" >&2
-            else
-              echo "--- $name stderr (empty) ---"
-            fi
-
-            if [[ -f "$status_file" ]]; then
-              echo "status: $(cat "$status_file")"
-            fi
-
-            echo "::endgroup::"
-          }
-
-          run_cmd user-data "sudo cat /var/log/user-data.log"
-          run_cmd docker-ps "sudo docker ps -a"
-          run_cmd mcp-logs "sudo docker logs mcp_vertica"
-          run_cmd vertica-logs "sudo docker logs vertica_ce"
-          run_cmd health-check "curl -sv http://127.0.0.1:8000/healthz || true"
-
-      - name: Upload remote logs
-        if: ${{ always() }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: remote-logs
-          path: remote-logs
-      - name: Fail if health check failed
-        if: ${{ steps.wait_for_health.outcome == 'failure' }}
-        run: |
-          echo "Health check did not succeed" >&2
-          exit 1
+          echo "MCP URL: ${{ steps.tfout.outputs.mcp }}" >> $GITHUB_STEP_SUMMARY
+          echo "Vertica:  ${{ steps.tfout.outputs.vertica }} (db=${{ env.VERTICA_DATABASE }}, user=${{ env.VERTICA_USER }})" >> $GITHUB_STEP_SUMMARY
