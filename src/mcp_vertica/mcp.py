@@ -219,18 +219,23 @@ class QueryLimiter:
 
 
 query_limiter = QueryLimiter()
+_VERTICA_MANAGER: VerticaConnectionManager | None = None
 
 
 @asynccontextmanager
 async def server_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
+    global _VERTICA_MANAGER
     manager = VerticaConnectionManager()
     try:
         config = VerticaConfig.from_env()
         manager.initialize_default(config)
         logger.info("Vertica connection pool ready", extra={"limit": config.connection_limit})
+        _VERTICA_MANAGER = manager
         yield {"vertica_manager": manager}
     finally:
         manager.close_all()
+        if _VERTICA_MANAGER is manager:
+            _VERTICA_MANAGER = None
         logger.info("Vertica connection pool closed")
 
 
@@ -273,7 +278,9 @@ async def _tools(request: Request) -> Response:
 
 
 async def _info(request: Request) -> Response:
-    manager: VerticaConnectionManager = request.app.state.vertica_manager
+    manager = _VERTICA_MANAGER or getattr(request.app.state, "vertica_manager", None)
+    if manager is None:
+        raise RuntimeError("Vertica manager not initialized")
     payload = {
         "version": os.getenv("VERTICA_MCP_VERSION", "unknown"),
         "pool": manager.config.connection_limit,
@@ -284,11 +291,11 @@ async def _info(request: Request) -> Response:
 
 def create_http_app() -> Starlette:
     app = Starlette()
-    app.state.vertica_manager = None  # type: ignore[attr-defined]
+    app.state.vertica_manager = _VERTICA_MANAGER  # type: ignore[attr-defined]
 
     @app.on_event("startup")
     async def _on_start() -> None:
-        app.state.vertica_manager = mcp.router.state.get("vertica_manager")
+        app.state.vertica_manager = _VERTICA_MANAGER
 
     allowed_origins = [origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 
@@ -302,26 +309,27 @@ def create_http_app() -> Starlette:
             allow_headers=["*"],
         )
 
-    http_app = mcp.http_app()
-    routes = [Mount("/", app=http_app)]
-    starlette_app = Starlette(routes=routes)
+    http_app = mcp.streamable_http_app()
+    starlette_app = Starlette()
     starlette_app.add_route("/healthz", healthz, methods=["GET"])
     starlette_app.add_route("/_alive", _alive, methods=["GET"])
     starlette_app.add_route("/api/info", _info, methods=["GET"])
     starlette_app.add_route("/tools.json", _tools, methods=["GET"])
+    starlette_app.mount("/", app=http_app)
 
     @starlette_app.exception_handler(TooManyRequestsError)
     async def _handle_rate_limit(request: Request, exc: TooManyRequestsError) -> Response:  # pragma: no cover - HTTP wiring
         return JSONResponse({"error": str(exc)}, status_code=429)
 
     for middleware in app.user_middleware:
-        starlette_app.add_middleware(middleware.cls, **middleware.options)
+        options = getattr(middleware, "kwargs", getattr(middleware, "options", {}))
+        starlette_app.add_middleware(middleware.cls, **options)
 
-    starlette_app.state.vertica_manager = None  # type: ignore[attr-defined]
+    starlette_app.state.vertica_manager = _VERTICA_MANAGER  # type: ignore[attr-defined]
 
     @starlette_app.on_event("startup")
     async def _startup() -> None:
-        starlette_app.state.vertica_manager = mcp.router.state.get("vertica_manager")
+        starlette_app.state.vertica_manager = _VERTICA_MANAGER
 
     return starlette_app
 
