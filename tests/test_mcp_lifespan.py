@@ -7,8 +7,6 @@ from types import ModuleType, SimpleNamespace
 
 import sys
 
-import pytest
-
 try:
     import sqlparse  # type: ignore  # noqa: F401
 except ModuleNotFoundError:
