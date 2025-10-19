@@ -3,12 +3,16 @@ import socket
 import sys
 import time
 
-host, port, timeout = sys.argv[1], int(sys.argv[2]), int(sys.argv[4]) if len(sys.argv) > 4 else 60
-start = time.time()
-while time.time() - start < timeout:
-    try:
-        with socket.create_connection((host, port), 2):
+host, port = sys.argv[1], int(sys.argv[2])
+deadline = time.time() + int(sys.argv[4] if len(sys.argv) > 4 and sys.argv[3] == "--timeout" else 60)
+while time.time() < deadline:
+    with socket.socket() as s:
+        s.settimeout(1)
+        try:
+            s.connect((host, port))
+            print("READY")
             sys.exit(0)
-    except OSError:
-        time.sleep(1)
+        except Exception:
+            time.sleep(1)
+print("TIMEOUT", file=sys.stderr)
 sys.exit(1)
