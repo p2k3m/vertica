@@ -10,7 +10,7 @@ MCP_HTTP_TOKEN="${MCP_HTTP_TOKEN}"
 # 1) Install basics
 dnf update -y
 amazon-linux-extras enable docker
-dnf install -y docker jq
+dnf install -y docker docker-compose-plugin jq
 systemctl enable --now docker
 
 # 2) ECR login(s)
