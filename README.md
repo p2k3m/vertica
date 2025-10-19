@@ -1,62 +1,125 @@
-# Vertica MCP on AWS — One-Click CI/CD (PoC, low-cost)
+# Vertica MCP on AWS — Two-stack CI/CD
 
-This repository provisions a spot EC2 instance that runs Vertica CE and an MCP HTTP server beside it. Push to `main` (or trigger `workflow_dispatch`) and the GitHub Actions pipeline will:
+This repository provisions two isolated stacks on AWS:
 
-1. Build and publish the MCP container image to Amazon ECR.
-2. Bootstrap Terraform remote state (S3 + DynamoDB) if needed.
-3. Apply Terraform to create IAM, security group, ECR repo, and the EC2 instance.
-4. Use AWS Systems Manager to smoke-test `/healthz` and an authenticated SQL query.
-5. Publish the MCP + Vertica connection details directly in the workflow summary so you can register the remote MCP with Claude Desktop.
+* **DB stack** (`deploy/db/**`) — Spot `t3.xlarge` Amazon Linux 2023 instance running Vertica CE via Docker (port 5433).
+* **MCP stack** (`deploy/mcp/**`, `src/**`, `tests/**`, `Dockerfile.mcp`) — Spot `t3.small` instance that pulls the MCP FastAPI server image from ECR and exposes port 8000.
+
+Each stack has its own GitHub Actions workflow with dedicated remote Terraform state, fail-fast credential checks, and post-deploy smoke tests via AWS Systems Manager. Pushes scoped to one stack never trigger the other.
 
 ## Repository layout
 
 ```
 .
-├─ .github/workflows/deploy.yml      # One-click pipeline (apply/destroy)
-├─ infra/
-│  ├─ backend.tf                    # Remote tfstate (S3 + DynamoDB)
-│  ├─ backend-bootstrap.sh          # Creates backend bucket/table
-│  ├─ main.tf                       # EC2, IAM, SG, ECR repo (MCP)
-│  ├─ outputs.tf                    # Public IP, URLs, etc.
-│  ├─ userdata.sh                   # Installs Docker; writes compose
-│  └─ variables.tf                  # All tunables (low-cost defaults)
+├─ deploy/
+│  ├─ db/
+│  │  ├─ README.md
+│  │  └─ terraform/
+│  │     ├─ backend-bootstrap.sh
+│  │     ├─ main.tf
+│  │     ├─ outputs.tf
+│  │     ├─ user_data_db.sh
+│  │     └─ variables.tf
+│  └─ mcp/
+│     ├─ README.md
+│     └─ terraform/
+│        ├─ backend-bootstrap.sh
+│        ├─ main.tf
+│        ├─ outputs.tf
+│        ├─ user_data_mcp.sh
+│        └─ variables.tf
+├─ .github/workflows/
+│  ├─ db-apply-destroy.yml
+│  └─ mcp-apply-destroy.yml
 ├─ src/mcp_vertica/
 │  ├─ __init__.py
-│  └─ server.py                     # FastAPI + FastMCP + vertica-python
-├─ sql/
-│  └─ get_version.sql               # Contract check (simple)
+│  └─ server.py
+├─ Dockerfile.mcp
 ├─ tests/
-│  ├─ test_health.py                # Unit test of /healthz
-│  └─ test_sql_rendering.py         # Template safety/coverage
-├─ scripts/
-│  ├─ wait-for-port.py              # Local compose bring-up helper
-│  └─ ssm_smoke.sh                  # Remote curl/nc via SSM
-├─ Dockerfile.mcp                   # Builds MCP image (port 8000)
-├─ docker-compose.yml               # Local dev (Mac/Win)
-├─ pyproject.toml                   # mcp, fastapi, vertica-python, etc.
-└─ PROMPTS.md                       # 120+ Codex prompts grouped
+│  ├─ test_health.py
+│  └─ test_sql_rendering.py
+├─ PROMPTS.md
+├─ pyproject.toml
+├─ uv.lock
+└─ docker-compose.yml
 ```
 
-## Quick Start
+## Required repository secrets
 
-1. **Set repository secrets** (`Settings → Secrets and variables → Actions`). Required:
-   * `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` *or* `AWS_ROLE_TO_ASSUME`
-   * `AWS_REGION` (default `ap-south-1`)
-   * `AWS_ACCOUNT_ID`
-   * `ALLOWED_CIDRS` (comma-delimited list like `"49.37.x.x/32","122.166.x.x/32"`)
-   * `VERTICA_IMAGE_URI` (`957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0`)
-   * `VERTICA_USER`, `VERTICA_PASSWORD`, `VERTICA_DATABASE`
-   * `MCP_HTTP_TOKEN` (random bearer token for remote access)
-2. **Push to `main`** or run the **`vertica-mcp-cicd`** workflow with `action=apply`.
-3. Open the workflow run → **Summary** to grab:
-   * MCP URL (`http://<ip>:8000`, use `Bearer <MCP_HTTP_TOKEN>`)
-   * Vertica SQL endpoint (`<ip>:5433`, plus DB/user creds)
-4. In Claude Desktop → *Settings → Developers → Add MCP server* and register either:
-   * **Local (stdio)** – `{ "command": ["uvx","mcp-vertica","--transport","stdio"], "workingDirectory": "." }`
-   * **Remote (HTTP)** – URL from the summary, `Authorization: Bearer <MCP_HTTP_TOKEN>`
-5. Ask Claude: “Run `get_version.sql` via Vertica MCP” → expect a row with `version()`.
+Set these under **Settings → Secrets and variables → Actions** before running any workflow:
 
-Destroy the stack via `workflow_dispatch` (`action=destroy`) or `terraform destroy -auto-approve` inside `infra/` when finished.
+* `AWS_REGION` (default `ap-south-1`)
+* `AWS_ACCOUNT_ID`
+* Either OIDC: `AWS_ROLE_TO_ASSUME` and `AWS_OIDC_ROLE_SESSION_NAME`, or static keys: `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`
+
+Optional:
+
+* `ALLOWED_CIDRS` — comma-separated IPv4 CIDRs (e.g. `"49.37.x.x/32","122.166.x.x/32"`) to open ports 5433/8000 only to those networks
+* `MCP_HTTP_TOKEN` — if set, the MCP HTTP server requires `Authorization: Bearer <token>`
+
+## Workflows
+
+### DB Stack (apply/destroy)
+
+* Triggered by pushes to `deploy/db/**` or manual `workflow_dispatch`.
+* Bootstraps the Terraform backend (`vertica-mcp-tf-<account>-<region>` bucket + DynamoDB lock table).
+* Applies Terraform with defaults: Spot `t3.xlarge`, 50 GiB gp3 volume, Vertica CE image `957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0`.
+* Runs `/usr/local/bin/db-smoke.sh` through SSM (executes `SELECT NOW();` via `vsql`).
+* Job summary prints the public IP and a copy/paste connection string (`HOST=<ip> PORT=5433 USER=dbadmin DB=VMart`).
+
+Destroy by dispatching the workflow with `action=destroy`.
+
+### MCP Stack (apply/destroy + build/push)
+
+* Triggered by pushes to `deploy/mcp/**`, `src/**`, `tests/**`, or `Dockerfile.mcp`.
+* Runs `uv sync --frozen`, `ruff`, and `pytest` before touching AWS.
+* Builds `Dockerfile.mcp`, pushes to `mcp-vertica` ECR repo, then applies Terraform for the MCP EC2 instance.
+* Terraform reads the DB stack’s remote state to populate `DB_HOST` and writes `/opt/mcp.env` for the container.
+* Smoke test hits `GET /healthz` via SSM; summary prints the MCP URL (`http://<ip>:8000`).
+
+Destroy by dispatching with `action=destroy`.
+
+## MCP server
+
+The MCP FastAPI server (`src/mcp_vertica/server.py`) supports both stdio and HTTP transports. Environment variables at startup:
+
+* `DB_HOST`, `DB_PORT` (default `5433`), `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+* Optional `MCP_HTTP_TOKEN` enabling bearer-token auth
+
+Endpoints:
+
+* `GET /healthz`
+* `POST /api/render`
+* `POST /api/query`
+
+For Claude Desktop (local stdio):
+
+```json
+{
+  "mcpServers": {
+    "vertica-local": {
+      "command": "uvx",
+      "args": ["mcp-vertica", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+For remote HTTP (beta):
+
+```json
+{
+  "mcpServers": {
+    "vertica-remote": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "http://<MCP-PUBLIC-IP>:8000/sse"],
+      "env": {
+        "AUTH_HEADER": "Authorization: Bearer <MCP_HTTP_TOKEN>"
+      }
+    }
+  }
+}
+```
 
 ## Local development
 
@@ -64,38 +127,10 @@ Destroy the stack via `workflow_dispatch` (`action=destroy`) or `terraform destr
 uv sync --frozen
 uv run ruff check
 uv run pytest -q
-VERTICA_IMAGE_URI=957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0 \
-VERTICA_USER=dbadmin VERTICA_PASSWORD=example VERTICA_DATABASE=vertica \
-MCP_HTTP_TOKEN=local docker compose up --build
+MCP_HTTP_TOKEN=local DB_HOST=localhost DB_PORT=5433 DB_USER=dbadmin DB_NAME=VMart \
+  docker compose up --build
 ./scripts/wait-for-port.py localhost 8000 --timeout 120
-curl http://127.0.0.1:8000/healthz
+curl -H "Authorization: Bearer local" http://127.0.0.1:8000/healthz
 ```
 
-## AWS deployment details
-
-* **Instance** – Amazon Linux 2023, default `t3.xlarge`, Spot (override `var.use_spot=false` for stability).
-* **Security** – Ports 5433 (Vertica) and 8000 (MCP) are opened only to `var.allowed_cidrs`. IMDSv2 enforced.
-* **State** – `infra/backend-bootstrap.sh` provisions a versioned S3 bucket + DynamoDB lock table if names aren’t supplied.
-* **User data** – Installs Docker + Compose, logs into ECR, writes `/opt/stack/compose.remote.yml`, starts Vertica and MCP, sets `/etc/motd` with connection hints, and optionally schedules auto-shutdown (`ttl_hours`).
-* **Smoke tests** – `scripts/ssm_smoke.sh` runs through AWS Systems Manager (no SSH) to validate `/healthz` and an authenticated `/api/query` using `sql/get_version.sql`.
-
-## MCP API surface
-
-* `GET /healthz` – readiness + SQL directory
-* `POST /api/render` – renders a SQL template with parameters (Bearer token required if configured)
-* `POST /api/query` – renders and executes the SQL, wrapping with `SELECT * FROM (…) LIMIT :n`
-
-All templates live under `sql/`, guarded by a strict filename regex to prevent traversal. Connections use `vertica-python` with retry (`tenacity`).
-
-## Prompts & automation
-
-`PROMPTS.md` contains 120 categorized prompts covering secrets hygiene, Terraform, IAM, networking, cost controls, Docker, MCP code, SQL templates, testing, CI/CD, observability, and security. Drop them into GitHub Copilot/Codespaces or Claude to scaffold future improvements quickly.
-
-## Troubleshooting
-
-* Check workflow logs for the “Secrets OK” preflight and Terraform outputs.
-* Use AWS SSM Session Manager (`aws ssm start-session --target <instance-id>`) for shell access.
-* Containers live under Docker Compose on the instance (`docker ps`, `docker logs mcp`, `docker logs vertica`).
-* Regenerate connection info by re-running the workflow with `action=apply`.
-
-Happy querying!
+Destroy AWS resources when idle to minimize costs; both stacks default to Spot instances with security-group ingress restricted to `ALLOWED_CIDRS`.

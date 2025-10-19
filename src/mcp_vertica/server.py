@@ -10,11 +10,11 @@ from pydantic import BaseModel, Field
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 SQL_DIR = pathlib.Path(__file__).resolve().parents[2] / "sql"
-V_HOST = os.environ.get("VERTICA_HOST", "localhost")
-V_PORT = int(os.environ.get("VERTICA_PORT", "5433"))
-V_USER = os.environ.get("VERTICA_USER", "dbadmin")
-V_PASS = os.environ.get("VERTICA_PASSWORD", "")
-V_DB = os.environ.get("VERTICA_DATABASE", "vertica")
+V_HOST = os.environ.get("DB_HOST") or os.environ.get("VERTICA_HOST", "localhost")
+V_PORT = int(os.environ.get("DB_PORT") or os.environ.get("VERTICA_PORT", "5433"))
+V_USER = os.environ.get("DB_USER") or os.environ.get("VERTICA_USER", "dbadmin")
+V_PASS = os.environ.get("DB_PASSWORD") or os.environ.get("VERTICA_PASSWORD", "")
+V_DB = os.environ.get("DB_NAME") or os.environ.get("VERTICA_DATABASE", "vertica")
 MCP_TOKEN = os.environ.get("MCP_HTTP_TOKEN", "")
 
 jinja = Environment(

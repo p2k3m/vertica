@@ -20,4 +20,4 @@ local-down:
 	docker compose down
 
 destroy:
-	cd infra && terraform destroy -auto-approve
+@echo "Run terraform destroy from deploy/db/terraform and deploy/mcp/terraform or use GitHub Actions workflows"
