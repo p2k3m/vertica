@@ -1,21 +1,18 @@
 [project]
 name = "mcp-vertica"
-version = "0.1.4"
+version = "0.2.0"
 description = "Vertica MCP using Fast MCP"
 requires-python = ">=3.12"
 dependencies = [
     "vertica-python>=1.0.0",
-    "click>=8.0.0",
-    "python-dotenv>=1.0.0",
+    "click>=8.1",
+    "python-dotenv>=1.0",
     "mcp[cli]",
-    "fastapi>=0.110",
+    "starlette>=0.37",
     "uvicorn[standard]>=0.29",
-    "pydantic>=2.7",
-    "requests>=2.31",
-    "pandas>=2.2",
-    "scikit-learn>=1.5",
-    "numpy>=1.26",
     "sqlparse>=0.5.3",
+    "pytest>=8.3",
+    "ruff>=0.6",
 ]
 
 [[project.authors]]

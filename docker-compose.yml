@@ -1,26 +1,33 @@
-version: '3.8'
-
+version: "3.9"
 services:
-  vertica:
-    # image: vertica/vertica-ce:11.1.0-0
-    image: vertica/vertica-ce:latest
-    platform: linux/amd64
+  vertica-ce:
+    image: 957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0
     container_name: vertica-ce
-    environment:
-      VERTICA_MEMDEBUG: 2
     ports:
       - "5433:5433"
-      - "5444:5444"
-    volumes:
-      - vertica_data:/home/dbadmin/VMart
-    healthcheck:
-      test: ["CMD", "/opt/vertica/bin/vsql", "-h", "localhost", "-d", "VMart", "-U", "dbadmin", "-c", "SELECT 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
     restart: unless-stopped
-
+    volumes:
+      - ./_data/vertica:/data
+  mcp-vertica:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: mcp-vertica
+    environment:
+      VERTICA_HOST: vertica-ce
+      VERTICA_PORT: "5433"
+      VERTICA_DATABASE: VMart
+      VERTICA_USER: dbadmin
+      VERTICA_PASSWORD: ""
+      VERTICA_CONNECTION_LIMIT: "5"
+      MCP_MAX_CONCURRENT_QUERIES: "4"
+      # MCP_HTTP_TOKEN: "set-me-for-remote"
+      # ALLOWED_ORIGINS: "https://smithery.ai,https://app.anthropic.com"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - vertica-ce
+    restart: unless-stopped
 volumes:
-  vertica_data:
+  vertica:
     driver: local
