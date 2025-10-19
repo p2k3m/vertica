@@ -1,0 +1,104 @@
+name: Deploy Vertica + MCP to AWS
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  AWS_REGION: ap-south-1
+  VERTICA_IMAGE_URI: ${{ vars.VERTICA_IMAGE_URI || '957650740525.dkr.ecr.ap-south-1.amazonaws.com/vertica-ce:v1.0' }}
+  MCP_IMAGE_REPO: mcp-vertica
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --frozen
+      - run: uv run ruff check
+      - run: uv run pytest -q
+
+  build_and_push_mcp:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fail fast if secrets missing
+        run: |
+          : "${{ secrets.AWS_ACCESS_KEY_ID }}" || { echo 'Missing AWS_ACCESS_KEY_ID'; exit 1; }
+          : "${{ secrets.AWS_SECRET_ACCESS_KEY }}" || { echo 'Missing AWS_SECRET_ACCESS_KEY'; exit 1; }
+          : "${{ secrets.AWS_ACCOUNT_ID }}" || { echo 'Missing AWS_ACCOUNT_ID'; exit 1; }
+      - name: Configure AWS creds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Ensure ECR repo exists
+        run: |
+          aws ecr describe-repositories --repository-names "$MCP_IMAGE_REPO" || \
+          aws ecr create-repository --repository-name "$MCP_IMAGE_REPO" >/dev/null
+      - name: Build & push MCP image
+        run: |
+          IMAGE_URI="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${AWS_REGION}.amazonaws.com/${MCP_IMAGE_REPO}:${{ github.sha }}"
+          docker build -f Dockerfile.mcp -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "image_uri=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+  infra:
+    needs: build_and_push_mcp
+    runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: 1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS creds
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Install Terraform
+        uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: 1.9.8 }
+      - name: Terraform init
+        working-directory: infra
+        run: terraform init -upgrade
+      - name: Terraform apply
+        working-directory: infra
+        env:
+          TF_VAR_aws_account_id: ${{ secrets.AWS_ACCOUNT_ID }}
+          TF_VAR_vertica_image_uri: ${{ env.VERTICA_IMAGE_URI }}
+          TF_VAR_mcp_image_repo: ${{ env.MCP_IMAGE_REPO }}
+          TF_VAR_mcp_image_tag: ${{ github.sha }}
+          TF_VAR_mcp_http_token: ${{ secrets.MCP_HTTP_TOKEN }}
+        run: |
+          terraform apply -auto-approve \
+            -var "allowed_cidrs=[\"${{ vars.ALLOWED_CIDR || '0.0.0.0/0' }}\"]"
+      - name: Export outputs
+        id: tfout
+        working-directory: infra
+        run: |
+          terraform output -json > tfout.json
+          cat tfout.json
+
+  smoke:
+    needs: infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Read outputs
+        run: |
+          MCP_URL=$(jq -r .mcp_http_url.value infra/tfout.json)
+          echo "MCP_URL=$MCP_URL" >> $GITHUB_ENV
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 60); do curl -sf "$MCP_URL/healthz" && exit 0; sleep 5; done; exit 1
+      - name: Info endpoint
+        run: curl -s "$MCP_URL/api/info" | jq .

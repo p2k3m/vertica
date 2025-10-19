@@ -1,12 +1,5 @@
-SELECT
-    c.cmdb_id,
-    c.container_name,
-    c.cluster_name,
-    c.namespace,
-    c.image,
-    c.last_seen_at
-FROM {containers_table} AS c
-WHERE (%s IS NULL OR c.cmdb_id = %s)
-  AND (%s IS NULL OR c.container_name ILIKE %s)
-ORDER BY c.last_seen_at DESC
-LIMIT %s;
+SELECT resource_name AS container_name, pod_name, cpu_limit_util_pct_mean, mem_limit_util_pct_mean, restart_count_rate, timestamp_utc_end_s
+FROM {schema}.cloud_gcp_gke_container
+WHERE cmdb_id = %s
+ORDER BY timestamp_utc_end_s DESC
+LIMIT 1;
