@@ -133,7 +133,7 @@ Example HTTP registration:
   "query": {
     "host": "vertica",
     "dbPort": "5433",
-    "database": "vmart",
+    "database": "VMart",
     "user": "dbadmin",
     "password": "password",
     "ssl": "false",
